@@ -21,3 +21,14 @@ terraform.rc
 ansible/.vault_pass
 ansible/.ansible_priv_key
 *.retry
+
+# SOPS - klucz prywatny age nigdy nie trafia do repozytorium.
+# Pliki *.sops.yaml sa zaszyfrowane i commitowane celowo.
+keys.txt
+*.agekey
+
+# Klucze SSH - do repozytorium trafiaja wylacznie *.pub
+keys/*_ed25519
+
+# Stan bootstrapu AWS - zawiera klucze IAM
+terraform/bootstrap/terraform.tfstate*
