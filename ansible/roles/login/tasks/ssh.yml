@@ -1,0 +1,69 @@
+# UWAGA na nazwę pliku.
+#
+# sshd bierze PIERWSZĄ napotkaną wartość dyrektywy, a drop-iny czyta
+# leksykograficznie - dlatego prefiks 00: żaden pakietowy plik (50-cloud-init,
+# 60-cloudimg-settings) nie może przykryć utwardzenia. Nazwa 00-login-* jest
+# celowo INNA niż 00-hardening.conf bootstrapu hosta - dwa procesy nie mogą
+# walczyć o jeden plik (to już raz odcięło hosta, gdy rola nadpisała plik
+# z dyrektywą Port).
+#
+# Maszyny gości to Ubuntu 24.04, gdzie sshd startuje przez aktywację gniazda,
+# a port ustawia override ssh.socket wsiany przez cloud-init. Host to Debian 13
+# z klasycznym ssh.service. Poniższe dyrektywy działają tak samo w obu przypadkach,
+# bo żadna nie dotyczy portu.
+- name: Wyłącz logowanie roota i uwierzytelnianie hasłem
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/00-login-hardening.conf
+    mode: "0644"
+    content: |
+      # Zarządzane przez Ansible (rola login).
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      X11Forwarding no
+      MaxAuthTries 3
+  notify: restart sshd
+
+# Restart dopiero po sprawdzeniu składni - błąd oznaczałby utratę dostępu do maszyny.
+#
+# check_mode: false, bo to odczyt, nie zmiana. W --check zadanie command jest
+# domyślnie pomijane, a wtedy siatka bezpieczeństwa poniżej nie ma danych
+# i przebieg kończy się fałszywym błędem. Walidacja niczego nie modyfikuje,
+# więc może iść również w trybie sprawdzania.
+- name: Sprawdź konfigurację sshd
+  ansible.builtin.command: /usr/sbin/sshd -t
+  changed_when: false
+  check_mode: false
+
+# Siatka bezpieczeństwa: gdyby zabrakło dyrektywy Port tam, gdzie sshd nie
+# korzysta z aktywacji gniazda, playbook zatrzyma się, zanim handler zrestartuje
+# usługę i odetnie dostęp.
+#
+# Bez `set -o pipefail` i bez `grep -q`: grep -q kończy się natychmiast po
+# dopasowaniu, zamyka potok i wysyła SIGPIPE do sshd, co przy pipefail zamienia
+# UDANE sprawdzenie w błąd. Fałszywy alarm w checku bezpieczeństwa jest gorszy
+# niż brak checku, bo uczy ignorowania jego wyniku.
+- name: Odczytaj porty, na których nasłuchuje sshd
+  ansible.builtin.shell: >-
+    /usr/sbin/sshd -T 2>/dev/null | grep -E '^port ' ;
+    systemctl show ssh.socket -p Listen 2>/dev/null
+  register: sshd_listen
+  changed_when: false
+  failed_when: false
+  # Jak wyżej: bez tego w --check rejestr jest pusty i assert niżej wywala
+  # cały playbook, mimo że na maszynie wszystko jest w porządku.
+  check_mode: false
+
+- name: Upewnij się, że sshd nasłuchuje na porcie {{ ssh_port }}
+  ansible.builtin.assert:
+    that: ssh_port | string in sshd_listen.stdout
+    fail_msg: >-
+      sshd nie nasłuchuje na porcie {{ ssh_port }}. Restart usługi odciąłby
+      dostęp do maszyny. Odczytano: {{ sshd_listen.stdout | trim }}
+    success_msg: "sshd nasłuchuje na porcie {{ ssh_port }}"
+
+- name: Usuń poprzedni plik utwardzenia (niższy priorytet)
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d/90-hardening.conf
+    state: absent
+  notify: restart sshd

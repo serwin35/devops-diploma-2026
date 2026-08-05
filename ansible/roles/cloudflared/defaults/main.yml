@@ -1,0 +1,4 @@
+# Ścieżka do katalogu Terraforma - stąd czytany jest token tunelu.
+terraform_project_path: ../terraform
+
+cloudflared_config_dir: /etc/cloudflared

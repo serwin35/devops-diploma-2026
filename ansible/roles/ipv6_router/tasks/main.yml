@@ -1,0 +1,58 @@
+# OVH routuje cały blok /64 na serwer i traktuje go jako on-link na uplinku.
+# Maszyny stoją jednak za hostem, w segmentach SDN, więc host musi:
+#   1. routować ruch między uplinkiem a segmentami (forwarding)
+#   2. odpowiadać na zapytania NDP routera OVH w imieniu tych maszyn (proxy NDP)
+#
+# Bez punktu 2 router OVH pyta "kto ma adres 2001:...:6e::10", nikt nie odpowiada
+# i ruch nigdy nie dociera do bastionu.
+
+- name: Włącz routing IPv6 i proxy NDP
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-ipv6-router.conf
+    sysctl_set: true
+    reload: true
+  loop:
+    - { name: "net.ipv6.conf.all.forwarding", value: "1" }
+    - { name: "net.ipv6.conf.{{ ipv6_uplink }}.proxy_ndp", value: "1" }
+    # Włączenie forwardingu domyślnie wyłącza przyjmowanie Router Advertisements,
+    # co mogłoby odciąć hostowi jego własną trasę domyślną. Wartość 2 oznacza
+    # "przyjmuj RA mimo forwardingu" i zabezpiecza przed tym niezależnie od tego,
+    # czy trasa pochodzi z RA, czy z konfiguracji interfejsu.
+    - { name: "net.ipv6.conf.{{ ipv6_uplink }}.accept_ra", value: "2" }
+  tags: [ipv6]
+
+- name: Zainstaluj ndppd
+  ansible.builtin.apt:
+    name: ndppd
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  tags: [ipv6]
+
+# Reguła obejmuje cały podprefiks, nie pojedyncze adresy - kolejna maszyna
+# w segmencie dostaje IPv6 bez zmian po stronie hosta.
+- name: Skonfiguruj proxy NDP
+  ansible.builtin.template:
+    src: ndppd.conf.j2
+    dest: /etc/ndppd.conf
+    mode: "0644"
+  notify: restart ndppd
+  tags: [ipv6]
+
+- name: Włącz ndppd
+  ansible.builtin.service:
+    name: ndppd
+    state: started
+    enabled: true
+  when: ipv6_delegated_prefixes | length > 0
+  tags: [ipv6]
+
+- name: Sprawdź, czy host nie stracił łączności IPv6
+  ansible.builtin.command: ping6 -c2 -W3 2606:4700:4700::1111
+  changed_when: false
+  # Weryfikacja jest odczytem, więc idzie także w --check. Inaczej zadanie
+  # zostaje pominięte, rejestr jest pusty i until/failed_when wywala przebieg.
+  check_mode: false
+  tags: [ipv6]

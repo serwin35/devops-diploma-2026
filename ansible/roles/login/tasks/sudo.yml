@@ -1,0 +1,16 @@
+- name: Nadaj sudo kontom imiennym
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/{{ item }}"
+    mode: "0440"
+    content: "{{ item }} ALL=(ALL) NOPASSWD:ALL\n"
+    validate: /usr/sbin/visudo -csf %s
+  loop: "{{ human_users }}"
+
+# Konto maszynowe Ansible - zakładane przez cloud-init, ale sudoers dopisujemy tutaj,
+# żeby stan był opisany w jednym miejscu i przeżył odtworzenie maszyny.
+- name: Nadaj sudo kontu maszynowemu
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/ansible
+    mode: "0440"
+    content: "ansible ALL=(ALL) NOPASSWD:ALL\n"
+    validate: /usr/sbin/visudo -csf %s

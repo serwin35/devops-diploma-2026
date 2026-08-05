@@ -1,0 +1,2 @@
+# Tunel Cloudflare tej maszyny. Token pobierany z outputu Terraforma po nazwie.
+cloudflared_tunnel_name: wf-proxmox

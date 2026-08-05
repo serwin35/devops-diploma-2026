@@ -1,0 +1,3 @@
+# Trasy statyczne dopisywane do konfiguracji sieci.
+# Format: lista słowników { interface, to, via }.
+extra_routes: []

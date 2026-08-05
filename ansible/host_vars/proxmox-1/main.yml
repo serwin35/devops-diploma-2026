@@ -1,0 +1,5 @@
+# Podprefiksy IPv6 wydzielone z bloku OVH dla segmentów SDN.
+# Wyliczane przez Terraform: cidrsubnet(ipv6_prefix, 16, <tag vnetu>)
+ipv6_uplink: vmbr0
+ipv6_delegated_prefixes:
+  - "2001:41d0:602:4f1a:6e::/80" # segment dmz (tag 110)

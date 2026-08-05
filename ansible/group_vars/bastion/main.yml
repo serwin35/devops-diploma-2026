@@ -1,0 +1,6 @@
+# Bastion ma dwie karty: publiczną (eth0) i w segmencie dmz (eth1). Bez tej
+# trasy ruch do pozostałych segmentów szedłby kartą publiczną.
+extra_routes:
+  - interface: eth1
+    to: 10.0.0.0/16
+    via: 10.0.110.1

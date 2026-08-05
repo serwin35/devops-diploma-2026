@@ -1,0 +1,25 @@
+- name: Dopisz trasy statyczne
+  ansible.builtin.template:
+    src: routes.yaml.j2
+    dest: /etc/netplan/60-trasy-wewnetrzne.yaml
+    mode: "0600"
+  when: extra_routes | length > 0
+  register: routes_config
+  tags: [routes, network]
+
+- name: Zastosuj konfigurację sieci
+  ansible.builtin.command: netplan apply
+  when: routes_config.changed
+  changed_when: true
+  tags: [routes, network]
+
+- name: Sprawdź, czy trasa istnieje
+  ansible.builtin.command: "ip route get {{ extra_routes[0].to | ansible.utils.ipaddr('address') | default('10.0.120.20') }}"
+  register: route_check
+  changed_when: false
+  failed_when: false
+  # Weryfikacja jest odczytem, więc idzie także w --check. Inaczej zadanie
+  # zostaje pominięte, rejestr jest pusty i until/failed_when wywala przebieg.
+  check_mode: false
+  when: extra_routes | length > 0
+  tags: [routes, network]

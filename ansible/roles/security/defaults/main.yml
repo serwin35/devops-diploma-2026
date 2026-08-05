@@ -1,0 +1,30 @@
+ssh_port: 22022
+
+# UFW jest drugą warstwą obrony - pierwszą to firewall hypervisora (polityka DROP
+# opisana w Terraformie), trzecią fail2ban. Ta sama reguła w dwóch miejscach jest
+# celowa: błąd w jednej warstwie nie otwiera maszyny.
+#
+# Źródła podajemy tam, gdzie są znane. Tam, gdzie ich nie ma, zawężenie i tak
+# robi warstwa niżej - powielanie całej macierzy reguł w dwóch miejscach
+# skończyłoby się ich rozjechaniem.
+# Prometheus działa w kontenerze. Gdy odpytuje eksporter na TEJ SAMEJ maszynie,
+# ruch wychodzi z adresu mostu Dockera (172.16.0.0/12), a nie z adresu maszyny -
+# reguła dopuszczająca tylko {{ monitoring_ip }} go nie obejmuje. Objawia się to
+# celem "DOWN" mimo endpointu zwracającego 200 z powłoki hosta.
+#
+# Zakres mostów Dockera jest prywatny i lokalny dla maszyny, więc dopuszczenie go
+# nie poszerza powierzchni ataku - do tych portów i tak nie da się dostać
+# z zewnątrz, bo firewall hypervisora odrzuca wszystko poza wymienionym ruchem.
+docker_bridge_cidr: 172.16.0.0/12
+
+ufw_allowed:
+  - { port: "{{ ssh_port }}", proto: tcp, comment: "SSH" }
+  - { port: 9100, proto: tcp, from: "{{ monitoring_ip }}", comment: "node_exporter" }
+  - { port: 9100, proto: tcp, from: "{{ docker_bridge_cidr }}", comment: "node_exporter z kontenera" }
+
+# Dokładki per grupa - definiowane w group_vars, doklejane do listy powyżej.
+ufw_extra: []
+
+fail2ban_bantime: 1h
+fail2ban_findtime: 10m
+fail2ban_maxretry: 5

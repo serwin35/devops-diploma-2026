@@ -1,0 +1,5 @@
+ssh_port: 22022
+
+# Konta imienne powstają z plików keys/humans/*.pub - nazwa użytkownika to nazwa
+# pliku. Dodanie osoby do projektu = dorzucenie jednego klucza publicznego.
+human_keys_glob: "../keys/humans/*.pub"

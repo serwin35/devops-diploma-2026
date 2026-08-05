@@ -1,0 +1,19 @@
+# Otwiera porty wskazane w zmiennej `ports`. Wołane przez role, które instalują
+# usługę - dzięki temu reguła firewalla mieszka obok tego, co ją uzasadnia.
+#
+# Wcześniej reguły siedziały w group_vars pod nazwą `ufw_extra`. Problem:
+# maszyna należąca do dwóch grup (np. docker + observability) dostawała
+# wyłącznie jedną z list - Ansible nie scala zmiennych o tej samej nazwie,
+# tylko jedna po cichu wygrywa. Objawiało się to celem "DOWN" w Prometheusie
+# przy poprawnie działającej usłudze.
+- name: Dopuść porty w UFW
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port | string }}"
+    proto: "{{ item.proto | default('tcp') }}"
+    from_ip: "{{ item.from | default('any') }}"
+    comment: "{{ item.comment }}"
+  loop: "{{ ports }}"
+  loop_control:
+    label: "{{ item.port }} od {{ item.from | default('any') }} ({{ item.comment }})"
+  when: "'proxmox' not in group_names"
