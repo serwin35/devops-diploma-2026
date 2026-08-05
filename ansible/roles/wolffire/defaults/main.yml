@@ -1,0 +1,16 @@
+wolffire_dir: /opt/wolffire
+
+# Rejestr obrazów. Tag podmienia pipeline przy każdym wdrożeniu - zapisuje go
+# do pliku .env obok compose.yml i przeładowuje jednostkę systemd.
+wolffire_registry: ghcr.io/serwin35/wf-chartapp-diploma
+wolffire_image_tag: latest
+wolffire_env: production
+wolffire_http_port: 80
+ghcr_username: serwin35
+
+postgres_image: postgres:18-alpine
+redis_image: redis:7-alpine
+
+wolffire_db_name: wolffire
+wolffire_db_user: wolffire
+# Hasło pochodzi z group_vars/all/secrets.sops.yml

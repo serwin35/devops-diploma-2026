@@ -1,0 +1,140 @@
+# Zarządzane przez Ansible. Środowisko deweloperskie aplikacji.
+#
+# Wersja tagu obrazu przychodzi z pliku .env obok, który podmienia pipeline.
+# Dzięki temu wdrożenie nie wymaga edycji tego pliku ani uprawnień do Dockera -
+# wystarczy zapis jednej zmiennej i przeładowanie jednostki systemd.
+#
+# Trzy procesy aplikacji (php-fpm, horizon, scheduler) korzystają z TEGO SAMEGO
+# obrazu i różnią się wyłącznie komendą. Rozjazd wersji między nimi jest
+# niemożliwy z definicji.
+name: wolffire
+
+networks:
+  # Własna sieć o jawnej nazwie zamiast domyślnej - kontenery znajdują się
+  # po nazwie usługi, a ruch nie miesza się z innymi stosami na maszynie.
+  wolffire:
+    driver: bridge
+
+volumes:
+  # Dane, które muszą przeżyć odtworzenie kontenerów.
+  postgres_data:
+  redis_data:
+  # storage/app Laravela: załączniki, wygenerowane pliki. Na produkcji zastąpi
+  # go S3, bo wiele replik nie może współdzielić wolumenu lokalnego.
+  app_storage:
+
+services:
+  php:
+    image: {{ wolffire_registry }}/php:${IMAGE_TAG}
+    container_name: wolffire-php
+    restart: unless-stopped
+    networks: [wolffire]
+    env_file: [.env.app]
+    volumes:
+      - app_storage:/var/www/html/storage/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Metryki php-fpm dla Prometheusa. Laravel nie wystawia /metrics, a status
+  # FPM (pm.status_path w www.conf) mówi to, co najważniejsze operacyjnie:
+  # liczba workerów, kolejka nasłuchu, wolne sloty.
+  fpm-exporter:
+    image: hipages/php-fpm_exporter:2.2.0
+    container_name: wolffire-fpm-exporter
+    restart: unless-stopped
+    networks: [wolffire]
+    ports:
+      - "{{ private_ip }}:9253:9253"
+    environment:
+      PHP_FPM_SCRAPE_URI: "tcp://php:9000/fpm-status"
+    depends_on:
+      - php
+
+  nginx:
+    image: {{ wolffire_registry }}/nginx:${IMAGE_TAG}
+    container_name: wolffire-nginx
+    restart: unless-stopped
+    networks: [wolffire]
+    # Nasłuch tylko na adresie prywatnym - z zewnątrz wchodzi się tunelem
+    # Cloudflare, który łączy się z bastionu.
+    ports:
+      - "{{ private_ip }}:80:8080"
+    depends_on:
+      - php
+
+  # Horizon przetwarza WSZYSTKIE kolejki. Bez niego aplikacja nie pobiera
+  # danych z integracji i nie wysyła niczego w tle.
+  horizon:
+    image: {{ wolffire_registry }}/php:${IMAGE_TAG}
+    container_name: wolffire-horizon
+    restart: unless-stopped
+    networks: [wolffire]
+    env_file: [.env.app]
+    volumes:
+      - app_storage:/var/www/html/storage/app
+    command: php artisan horizon
+    stop_grace_period: 60s
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    image: {{ wolffire_registry }}/php:${IMAGE_TAG}
+    container_name: wolffire-scheduler
+    restart: unless-stopped
+    networks: [wolffire]
+    env_file: [.env.app]
+    command: php artisan schedule:work
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: {{ postgres_image }}
+    container_name: wolffire-postgres
+    restart: unless-stopped
+    networks: [wolffire]
+    environment:
+      POSTGRES_DB: {{ wolffire_db_name }}
+      POSTGRES_USER: {{ wolffire_db_user }}
+      POSTGRES_PASSWORD: {{ wolffire_db_password }}
+    volumes:
+      # Od Postgresa 18 obraz oficjalny przenosi PGDATA o katalog wyżej -
+      # montowanie pod .../data kończy się odmową startu z błędem
+      # "in 18+, these Docker images are configured to store database data...".
+      - postgres_data:/var/lib/postgresql
+    # Bez health checku kontenery aplikacji wstają szybciej niż baza i wysypują
+    # się na pierwszym zapytaniu.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ wolffire_db_user }} -d {{ wolffire_db_name }}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: {{ redis_image }}
+    container_name: wolffire-redis
+    restart: unless-stopped
+    networks: [wolffire]
+    volumes:
+      - redis_data:/data
+    # noeviction jest obowiązkowe: Redis trzyma kolejki Horizona, a domyślna
+    # polityka eksmisji po cichu skasowałaby zadania przy zapełnieniu pamięci.
+    # To samo hasło co na produkcji - .env aplikacji jest wspólnym szablonem
+    # i klient php-redis wysyła AUTH bezwarunkowo, gdy REDIS_PASSWORD jest
+    # ustawione. Redis bez requirepass odrzuca wtedy połączenie błędem
+    # "ERR AUTH called without any password configured".
+    command: >-
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy noeviction
+      --requirepass {{ wolffire_redis_password }}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "{{ wolffire_redis_password }}", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

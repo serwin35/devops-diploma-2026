@@ -1,0 +1,2 @@
+# Tunel produkcyjny - apex wolffire.dev celuje w Traefika na tym węźle.
+cloudflared_tunnel_name: wf-prod

@@ -1,0 +1,7 @@
+# Węzły klastra rozmawiają ze sobą po wielu portach (flannel VXLAN, kubelet,
+# metrics-server). Zamiast wyliczać je wszystkie, otwieramy segment na siebie -
+# tak samo jak grupa bezpieczeństwa 'k3s-internal' warstwę niżej.
+ufw_extra:
+  - { port: "1:65535", proto: tcp, from: "{{ k3s_subnet }}", comment: "Ruch wewnątrz klastra (TCP)" }
+  - { port: "1:65535", proto: udp, from: "{{ k3s_subnet }}", comment: "Ruch wewnątrz klastra (UDP)" }
+  - { port: 6443, proto: tcp, from: "{{ cicd_ip }}", comment: "API dla wdrożeń z CI" }

@@ -1,0 +1,40 @@
+# Zarządzane przez Ansible. Wartości produkcyjne charta - w tym sekrety,
+# dlatego plik ma tryb 0600 i leży wyłącznie na serwerze k3s.
+ghcrUsername: {{ ghcr_username }}
+ghcrToken: {{ ghcr_token }}
+
+image:
+  php:
+    repository: {{ wolffire_registry }}/php
+    tag: "{{ wolffire_image_tag }}"
+  nginx:
+    repository: {{ wolffire_registry }}/nginx
+    tag: "{{ wolffire_image_tag }}"
+
+app:
+  key: "{{ wolffire_app_key }}"
+  env: production
+  url: https://{{ public_zone }}
+
+db:
+  host: {{ db_ip }}
+  database: {{ wolffire_db_name | default('wolffire') }}
+  username: {{ wolffire_db_user | default('wolffire') }}
+  password: "{{ wolffire_db_password }}"
+
+redis:
+  host: {{ db_ip }}
+  password: "{{ wolffire_redis_password }}"
+
+ingress:
+  host: {{ public_zone }}
+
+# Horizon to master + supervisory + workery - każdy proces PHP z własnym
+# narzutem. 512Mi z domyślnych values kończyło się OOMKilled w pętli
+# (exit 137 trzy sekundy po starcie).
+horizon:
+  resources:
+    requests:
+      memory: 256Mi
+    limits:
+      memory: 768Mi

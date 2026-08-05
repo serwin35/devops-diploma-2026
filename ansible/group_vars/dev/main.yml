@@ -1,0 +1,5 @@
+# Aplikacja dev - port HTTP
+wolffire_http_port: 80
+
+# Tunel Cloudflare tej maszyny. Token pobierany z outputu Terraforma po nazwie.
+cloudflared_tunnel_name: wf-dev
