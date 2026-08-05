@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help secrets aws host infra plan configure up fmt validate
+.PHONY: help secrets secrets-app aws host infra plan configure check status up fmt validate
 
 # SOPS na macOS szuka klucza w ~/Library/Application Support/sops/age/, a na Linuksie
 # w ~/.config/sops/age/. Wskazujemy ścieżkę XDG jawnie, żeby to samo repozytorium
@@ -23,8 +23,11 @@ aws: ## Krok zerowy AWS: buckety S3 i tożsamości IAM (stan lokalny, uruchamian
 	@echo "Klucze do przeniesienia przez 'make secrets':"
 	@terraform -chdir=terraform/bootstrap output -json credentials
 
-secrets: ## Edycja zaszyfrowanych poświadczeń (odszyfrowuje w edytorze, zapisuje zaszyfrowane)
+secrets: ## Edycja poświadczeń dostawców (Proxmox, Cloudflare, AWS)
 	sops secrets.sops.yaml
+
+secrets-app: ## Edycja sekretów wnętrza infrastruktury (hasła baz, Grafany, Jenkinsa...)
+	sops ansible/group_vars/all/secrets.sops.yml
 
 # Ansible odpalamy z jego katalogu: tylko wtedy znajduje ansible.cfg i tylko wtedy
 # względne ścieżki do kluczy w ssh_config (../keys/...) wskazują na właściwe pliki.
@@ -41,6 +44,22 @@ infra: ## Terraform: sieć SDN, storage, firewall, maszyny wirtualne
 
 configure: ## Ansible: konfiguracja wszystkiego, co działa wewnątrz maszyn
 	$(SOPS_ENV) 'cd ansible && ansible-playbook playbook.yml'
+
+check: ## Ansible na sucho: co by się zmieniło, z diffem (nic nie zmienia)
+	$(SOPS_ENV) 'cd ansible && ansible-playbook playbook.yml --check --diff'
+
+# Jeden rzut oka na zdrowie całości: węzły i pody produkcji, kontenery dev,
+# odpowiedzi HTTP obu środowisk. Wyłącznie odczyt.
+status: ## Szybki przegląd zdrowia: klaster, kontenery, odpowiedzi HTTP
+	@echo "== k3s: wezly =="
+	@ssh -F ansible/ssh_config wf-k3s-server-1 'sudo k3s kubectl get nodes' 2>/dev/null
+	@echo "\n== k3s: pody aplikacji =="
+	@ssh -F ansible/ssh_config wf-k3s-server-1 'sudo k3s kubectl get pods -n wolffire' 2>/dev/null
+	@echo "\n== dev: kontenery =="
+	@ssh -F ansible/ssh_config wf-wolffire-dev-app-1 'sudo docker compose -f /opt/wolffire/compose.yml ps --format "table {{.Name}}\t{{.Status}}"' 2>/dev/null
+	@echo "\n== HTTP =="
+	@printf "prod  https://wolffire.dev      -> " ; curl -s -o /dev/null -w "%{http_code}\n" -L --max-time 10 https://wolffire.dev
+	@printf "dev   https://dev.wolffire.dev  -> " ; curl -s -o /dev/null -w "%{http_code}\n" -L --max-time 10 https://dev.wolffire.dev
 
 up: infra configure ## Pełne wdrożenie od zera
 
