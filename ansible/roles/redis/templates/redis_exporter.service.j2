@@ -1,0 +1,37 @@
+# Zarządzane przez Ansible.
+[Unit]
+Description=Prometheus Redis Exporter
+Documentation=https://github.com/oliver006/redis_exporter
+After=network-online.target redis-server.service
+Wants=network-online.target
+
+[Service]
+# Eksporter uwierzytelnia się tym samym hasłem co aplikacja, ale hasło siedzi
+# w osobnym pliku (0640), a nie w tej jednostce: plik jednostki ma tryb 0644,
+# więc `Environment=` z hasłem mógłby odczytać każdy użytkownik maszyny -
+# także przez `systemctl show redis_exporter`.
+EnvironmentFile={{ redis_exporter_config_dir }}/env
+Type=simple
+User={{ redis_exporter_user }}
+Group={{ redis_exporter_user }}
+ExecStart={{ redis_exporter_dir }}/current/redis_exporter \
+  -redis.addr redis://{{ private_ip }}:{{ redis_port }} \
+  -web.listen-address {{ private_ip }}:{{ redis_exporter_port }}
+Restart=on-failure
+RestartSec=5
+
+# Eksporter tylko czyta metryki - nie ma powodu, żeby mógł cokolwiek zapisać
+# na dysku ani podnieść uprawnień.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+# AF_UNIX zostaje - bez niego proces nie ma jak oddać logów do journald,
+# a Alloy nie zobaczy niczego poza samym faktem uruchomienia usługi.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

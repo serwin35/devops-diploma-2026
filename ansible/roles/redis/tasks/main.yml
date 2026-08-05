@@ -1,0 +1,222 @@
+# Redis obsługuje kolejki Laravel Horizona, cache i sesje aplikacji na k3s.
+# Stoi na tej samej maszynie co Postgres (3 GB RAM) - podział pamięci opisany
+# w defaults/main.yml.
+
+- name: Otwórz porty Redisa i eksportera
+  ansible.builtin.include_role:
+    name: security
+    tasks_from: open_ports
+  vars:
+    ports:
+      - { port: "{{ redis_port }}", from: "{{ k3s_subnet }}", comment: "Redis z klastra" }
+      - { port: "{{ redis_exporter_port }}", from: "{{ monitoring_ip }}", comment: "redis_exporter" }
+  tags: [redis]
+
+# Pakiet z repozytorium Ubuntu 24.04 to Redis 7.0 - dokładnie ta gałąź, której
+# potrzebujemy. Dodawanie repozytorium packages.redis.io dałoby wersję 8.x
+# i wymagałoby pinowania pakietu, żeby `apt upgrade` nie przeszedł po cichu
+# na kolejną wersję major pod działającymi kolejkami.
+- name: Zainstaluj Redisa
+  ansible.builtin.apt:
+    name: redis-server
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  tags: [redis]
+
+# Przepisywanie AOF odbywa się przez fork. Przy domyślnym overcommit=0 jądro
+# odmawia forka, gdy kopia stron nie zmieściłaby się w pamięci - mimo że dzięki
+# copy-on-write faktycznie zmieści się z zapasem. Objawia się to błędem
+# "Can't save in background: fork: Cannot allocate memory" i AOF, który rośnie
+# w nieskończoność, bo nigdy nie zostaje przepisany.
+- name: Pozwól jądru na nadmiarową alokację pamięci
+  ansible.posix.sysctl:
+    name: vm.overcommit_memory
+    value: "1"
+    sysctl_file: /etc/sysctl.d/60-redis.conf
+    state: present
+    reload: true
+  tags: [redis]
+
+# Kolejka nasłuchu jądra musi być co najmniej równa tcp-backlog Redisa, inaczej
+# jest po cichu obcinana i przy skoku ruchu część połączeń z klastra odpada.
+- name: Podnieś kolejkę nasłuchu gniazd
+  ansible.posix.sysctl:
+    name: net.core.somaxconn
+    value: "511"
+    sysctl_file: /etc/sysctl.d/60-redis.conf
+    state: present
+    reload: true
+  tags: [redis]
+
+- name: Wygeneruj konfigurację Redisa
+  ansible.builtin.template:
+    src: redis.conf.j2
+    dest: /etc/redis/redis.conf
+    owner: redis
+    group: redis
+    mode: "0640"
+  notify: restart redis
+  tags: [redis]
+
+- name: Włącz Redisa
+  ansible.builtin.systemd_service:
+    name: redis-server
+    state: started
+    enabled: true
+  tags: [redis]
+
+# --- Eksporter metryk ---
+#
+# Binarka z systemd, nie kontener i nie pakiet: maszyna celowo nie należy do
+# grupy `docker` (baza produkcyjna nie utrzymuje demona kontenerów), a Ubuntu
+# nie wozi pakietu prometheus-redis-exporter - w przeciwieństwie do eksportera
+# Postgresa, którego bierzemy właśnie z repozytorium dystrybucji.
+
+- name: Utwórz konto systemowe eksportera
+  ansible.builtin.user:
+    name: "{{ redis_exporter_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    home: "{{ redis_exporter_dir }}"
+  tags: [redis]
+
+# Instalacja pod katalog z numerem wersji plus dowiązanie `current`: podbicie
+# redis_exporter_version pobiera nową binarkę i przełącza dowiązanie, zamiast
+# nadpisywać plik w miejscu. Powrót do poprzedniej wersji to zmiana zmiennej.
+- name: Utwórz katalog eksportera
+  ansible.builtin.file:
+    path: "{{ redis_exporter_dir }}/{{ redis_exporter_version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [redis]
+
+- name: Pobierz i rozpakuj redis_exporter
+  ansible.builtin.unarchive:
+    src: >-
+      https://github.com/oliver006/redis_exporter/releases/download/v{{ redis_exporter_version
+      }}/redis_exporter-v{{ redis_exporter_version }}.linux-amd64.tar.gz
+    dest: "{{ redis_exporter_dir }}/{{ redis_exporter_version }}"
+    remote_src: true
+    extra_opts:
+      - --strip-components=1
+    owner: root
+    group: root
+    mode: "0755"
+    creates: "{{ redis_exporter_dir }}/{{ redis_exporter_version }}/redis_exporter"
+  notify: restart redis_exporter
+  tags: [redis]
+
+- name: Przełącz dowiązanie na wybraną wersję
+  ansible.builtin.file:
+    src: "{{ redis_exporter_dir }}/{{ redis_exporter_version }}"
+    dest: "{{ redis_exporter_dir }}/current"
+    state: link
+  notify: restart redis_exporter
+  tags: [redis]
+
+# Hasło w pliku środowiskowym, nie w jednostce systemd. Jednostka musi być
+# czytelna dla wszystkich (0644), a `systemctl show` i tak wypisuje każde
+# `Environment=` dowolnemu użytkownikowi - hasło Redisa trafiało tym samym
+# kanałem do logu Ansible przy zadaniu włączającym usługę.
+- name: Utwórz katalog konfiguracji eksportera
+  ansible.builtin.file:
+    path: "{{ redis_exporter_config_dir }}"
+    state: directory
+    owner: root
+    group: "{{ redis_exporter_user }}"
+    mode: "0750"
+  tags: [redis]
+
+- name: Zapisz hasło eksportera
+  ansible.builtin.copy:
+    dest: "{{ redis_exporter_config_dir }}/env"
+    owner: root
+    group: "{{ redis_exporter_user }}"
+    mode: "0640"
+    content: "REDIS_PASSWORD={{ wolffire_redis_password }}\n"
+  no_log: true
+  notify: restart redis_exporter
+  tags: [redis]
+
+- name: Wygeneruj jednostkę eksportera
+  ansible.builtin.template:
+    src: redis_exporter.service.j2
+    dest: /etc/systemd/system/redis_exporter.service
+    mode: "0644"
+  notify: restart redis_exporter
+  tags: [redis]
+
+- name: Włącz redis_exporter
+  ansible.builtin.systemd_service:
+    name: redis_exporter
+    state: started
+    enabled: true
+    daemon_reload: true
+  tags: [redis]
+
+- name: Zastosuj zmiany przed weryfikacją
+  ansible.builtin.meta: flush_handlers
+  tags: [redis]
+
+# Weryfikacja kończąca rolę. Odpytujemy adres wewnętrzny, bo to jedyny, na
+# którym Redis nasłuchuje - połączenie po localhost udałoby się nawet przy
+# błędnym `bind`.
+# Hasło idzie przez REDISCLI_AUTH, a nie przez `-a` w linii polecenia: argumenty
+# procesu widzi w `ps` KAŻDY użytkownik maszyny, a Ansible wpisuje je do logu
+# jako `cmd`. Zmienna środowiskowa jest czytelna tylko dla właściciela procesu
+# i roota, i nie trafia do wyniku zadania. Znika przy okazji --no-auth-warning,
+# bo REDISCLI_AUTH nie wywołuje ostrzeżenia.
+- name: Sprawdź, że Redis odpowiada na adresie wewnętrznym
+  ansible.builtin.command:
+    cmd: "redis-cli -h {{ private_ip }} -p {{ redis_port }} ping"
+  environment:
+    REDISCLI_AUTH: "{{ wolffire_redis_password }}"
+  register: redis_ping
+  retries: 6
+  delay: 5
+  until: redis_ping.rc == 0 and 'PONG' in redis_ping.stdout
+  changed_when: false
+  # Weryfikacja jest odczytem, więc idzie także w --check. Inaczej zadanie
+  # zostaje pominięte, rejestr jest pusty i until/failed_when wywala przebieg.
+  check_mode: false
+  tags: [redis]
+
+# Sprawdzamy jednocześnie politykę eksmisji. To ustawienie decyduje o tym, czy
+# zadania w kolejce mogą zniknąć bez śladu, więc nie może zależeć od tego, czy
+# ktoś nie nadpisał konfiguracji ręcznie przez CONFIG SET.
+- name: Sprawdź, że polityka eksmisji chroni kolejki
+  ansible.builtin.command:
+    cmd: "redis-cli -h {{ private_ip }} -p {{ redis_port }} config get maxmemory-policy"
+  environment:
+    REDISCLI_AUTH: "{{ wolffire_redis_password }}"
+  register: redis_policy
+  changed_when: false
+  failed_when: redis_maxmemory_policy not in redis_policy.stdout
+  # Weryfikacja jest odczytem, więc idzie także w --check. Inaczej zadanie
+  # zostaje pominięte, rejestr jest pusty i until/failed_when wywala przebieg.
+  check_mode: false
+  tags: [redis]
+
+# `redis_up 1` to jedyny dowód, że eksporter nie tylko wstał, ale i połączył się
+# z Redisem. Sam kod 200 zwróciłby również eksporter celujący w zły adres -
+# w Grafanie objawiłoby się to pustym dashboardem.
+- name: Sprawdź, że eksporter zwraca metryki Redisa
+  ansible.builtin.uri:
+    url: "http://{{ private_ip }}:{{ redis_exporter_port }}/metrics"
+    return_content: true
+  register: redis_exporter_metrics
+  retries: 6
+  delay: 5
+  until: redis_exporter_metrics.status is defined and redis_exporter_metrics.status == 200
+  changed_when: false
+  failed_when: >-
+    redis_exporter_metrics.status != 200
+    or 'redis_up 1' not in redis_exporter_metrics.content
+  # Weryfikacja jest odczytem, więc idzie także w --check. Inaczej zadanie
+  # zostaje pominięte, rejestr jest pusty i until/failed_when wywala przebieg.
+  check_mode: false
+  tags: [redis]
