@@ -494,6 +494,10 @@ sześć.
 
 ## 10. Troubleshooting
 
+Pierwszy ruch przy każdym z poniższych objawów jest ten sam: `make status`
+(albo `make test-infra`, gdy chcesz też sprawdzić Terraform i Ansible) - patrz
+§1. Dopiero gdy wiadomo, **co** nie działa, schodzimy do komend niżej.
+
 ### Cel jest DOWN w `/targets`
 
 Po kolei, od najtańszego:
