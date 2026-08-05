@@ -1,0 +1,89 @@
+# Skopiuj do terraform.tfvars i uzupelnij. Plik z prawdziwymi wartosciami jest
+# w .gitignore - do repozytorium trafia wylacznie ten wzorzec.
+#
+# Sekrety NIE sa zmiennymi Terraforma. Poswiadczenia providerow siedza
+# zaszyfrowane w secrets.sops.yaml i wchodza przez `make infra`:
+#   PROXMOX_VE_API_TOKEN, CLOUDFLARE_API_TOKEN, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+
+# API Proxmoxa nie jest wystawione na internet - port 8006 jest zamkniety,
+# a panel chodzi przez proxmox.wolffire.dev za Zero Trust Access. Terraform
+# dochodzi do API tunelem SSH, ktory trzeba zestawic przed planem/apply:
+#
+#   ssh -F ansible/ssh_config -fN -L 18006:localhost:8006 wf-proxmox-1
+proxmox_endpoint = "https://127.0.0.1:18006"
+
+proxmox_node_names = {
+  "devops-proxmox-infra" = "57.128.192.26",
+}
+
+proxmox_users = [
+  "mateusz.serwinowski@gmail.com",
+]
+
+proxmox_resource_pools = [
+  "internal", # Jenkins, monitoring
+  "dev",      # srodowisko deweloperskie
+  "prod",     # klaster k3s + baza produkcyjna
+]
+
+ansible_user = "ansible"
+ssh_port     = 22022
+
+# Konto SSH uzywane wylacznie przez Terraform do wgrywania snippetow cloud-init.
+# Domyslnie "terraform" - odkomentowac tylko przy innej nazwie na hoscie.
+# terraform_ssh_user = "terraform"
+
+ssh_public_keys = [
+  # Klucz maszynowy - uzywany przez Ansible.
+  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDv3xKMiSgOTMkwS4IdNm/I6axG/aFGVhzvTFAot1ct7 ansible@wolffire-diploma",
+  # Klucz osobisty Mateusza - zeby dalo sie wejsc na maszyne bez Ansible.
+  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAwcb78TVUGGaiHOBTEdqwctQ/Pobc4xZHztPBxt2LKX serwin@MacBook-Pro-Mateusz.local",
+]
+
+# Adresy, z ktorych wolno sie dobic do SSH i UI Proxmoxa.
+#
+# Proxmox nie przyjmuje w ipsecie prefiksu zerowego, wiec "caly internet" zapisuje
+# sie jako dwie polowki: 0.0.0.0/1 + 128.0.0.0/1. Zostawione otwarte na czas
+# budowy - do zawezenia do wlasnego adresu, gdy tylko stanie tunel Cloudflare.
+admin_ips = [
+  "0.0.0.0/1",
+  "128.0.0.0/1",
+  # "83.29.83.217/32",  # adres wykryty z biezacego polaczenia SSH
+]
+
+zone                    = "wolffire.dev"
+cloudflare_account_name = "ZMIEN_MNIE"
+
+access_emails = [
+  "mateusz.serwinowski@gmail.com",
+]
+
+aws_region = "eu-north-1"
+
+# --- Bastion: dodatkowy adres publiczny OVH ---
+#
+# Kolejnosc czynnosci:
+#   1. Zamow dodatkowy adres IP w panelu OVH
+#   2. Utworz dla niego wirtualny MAC: panel > IP > "Dodaj wirtualny MAC" (typ ovh)
+#   3. Wpisz oba ponizej i uruchom `make infra`
+#
+# Puste wartosci = bastion stoi wylacznie w sieci prywatnej, a wejscie prowadzi
+# przez tunel Cloudflare. Konfiguracja dziala w obu wariantach.
+
+# bastion_public_ip   = "57.128.xxx.xxx"
+# bastion_mac_address = "02:00:00:xx:xx:xx"
+
+
+# --- Bastion: publiczny adres IPv6 (darmowy) ---
+#
+# UWAGA: zmienna jest zadeklarowana, ale nie jest jeszcze przekazywana do modulu
+# proxmox_bootstrap - dopoki tego nie ma, ponizsza wartosc niczego nie zmienia.
+#
+# OVH routuje na serwer caly blok /64. Host wydziela z niego podprefiks /80 dla
+# segmentu dmz i routuje go dalej - nie trzeba zadnego wirtualnego MAC-a ani
+# dokupowania adresow. To mechanizm wylacznie dla IPv4 failover.
+#
+#   dmz (tag 110) -> 2001:41d0:602:4f1a:6e::/80
+#   brama (host)  -> 2001:41d0:602:4f1a:6e::1
+#   bastion       -> 2001:41d0:602:4f1a:6e::10
+ipv6_prefix = "2001:41d0:602:4f1a::/64"
