@@ -88,8 +88,11 @@ Jedyne wejście do operacji na infrastrukturze - nikt nie powinien wołać
 | `make configure` | `ansible-playbook playbook.yml` - cała konfiguracja maszyn |
 | `make up` | `infra` + `configure` razem |
 | `make plan` | `terraform plan` - podgląd zmian |
-| `make secrets` | `sops secrets.sops.yaml` - edycja sekretów w edytorze |
+| `make secrets` | `sops secrets.sops.yaml` - sekrety dostawców (Proxmox, Cloudflare, AWS) |
+| `make secrets-app` | `sops ansible/group_vars/all/secrets.sops.yml` - sekrety wnętrza (hasła baz, Grafany...) |
 | `make aws` | Terraform bootstrap: buckety S3 + IAM (stan lokalny, raz) |
+| `make check` | `ansible-playbook playbook.yml --check --diff` - Ansible na sucho |
+| `make status` | Zdrowie całości: węzły k3s, pody, kontenery dev, kody HTTP - tylko odczyt |
 | `make test-infra` | `scripts/smoke-test.sh` - testy dymne, tylko odczyt |
 | `make fmt` / `make validate` | Formatowanie i walidacja składni |
 

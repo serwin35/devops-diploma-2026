@@ -675,6 +675,89 @@ open https://dev.wolffire.dev
 # 6. Powiadomienie na kanale
 ```
 
+### Demonstracje na życzenie komisji - przećwiczone scenariusze
+
+Trzy pokazy, o które komisja prosi najczęściej. Każdy przećwiczony w całości
+na tej infrastrukturze; czasy realne.
+
+#### A. Kubernetes przekłada ruch (drain węzła, ~3 minuty)
+
+Przygotuj TRZY terminale, zanim zaczniesz mówić:
+
+```bash
+# Terminal A - podgląd podów na żywo (zostaje włączony przez cały pokaz)
+ssh wf-k3s-server-1
+sudo k3s kubectl get pods -n wolffire -o wide -w
+
+# Terminal B - dowód ciągłości ruchu (sznurek dwusetek to sedno pokazu)
+while true; do curl -s -o /dev/null -w "%{http_code} " https://wolffire.dev; sleep 1; done
+
+# Terminal C - sterowanie
+ssh wf-k3s-server-1
+sudo k3s kubectl get nodes -o wide          # stan wyjściowy: 3 węzły Ready
+sudo k3s kubectl drain k3s-agent-1 --ignore-daemonsets --delete-emptydir-data
+```
+
+Co komentować w trakcie: w terminalu A pody z `k3s-agent-1` przechodzą w
+`Terminating`, nowe wstają na `k3s-agent-2`; w terminalu B kody 200 lecą
+bez przerwy, bo nginx ma dwie repliki na różnych węzłach. Węzeł w
+`get nodes` pokazuje `Ready,SchedulingDisabled`.
+
+Po pokazie KONIECZNIE przywróć węzeł do harmonogramowania:
+
+```bash
+sudo k3s kubectl uncordon k3s-agent-1
+```
+
+Wariant krótszy (gdy mało czasu) - samoleczenie Deploymentu:
+
+```bash
+sudo k3s kubectl delete pod -n wolffire -l app.kubernetes.io/component=php --wait=false
+sudo k3s kubectl get pods -n wolffire      # nowy pod wstaje w kilka sekund
+```
+
+#### B. Ansible: samonaprawa i idempotentność (~2 minuty)
+
+Najkrótszy dowód, że konfiguracja to kod, a nie stan ręcznie wyklikany:
+
+```bash
+# 1. Kontrolowane psucie: kasujemy konfigurację alertów na maszynie monitoringu
+ssh wf-monitoring-1 'sudo rm /opt/monitoring/prometheus/alerts.yml'
+
+# 2. Playbook wykrywa brak i odtwarza plik (widać changed + przeładowanie)
+cd ansible
+sops exec-env ../secrets.sops.yaml \
+  'ansible-playbook playbook.yml --limit monitoring-1 --tags monitoring'
+
+# 3. Drugi przebieg - stan docelowy osiągnięty, nic do roboty
+sops exec-env ../secrets.sops.yaml \
+  'ansible-playbook playbook.yml --limit monitoring-1 --tags monitoring'
+# PLAY RECAP: changed=0 failed=0
+```
+
+Zasady poprawnego uruchamiania Ansible w tym repo (pełny opis:
+[`docs/komendy/ansible.md`](komendy/ansible.md)):
+
+- zawsze z katalogu `ansible/` (tam mieszka `ansible.cfg` i względne ścieżki kluczy),
+- zawsze przez `sops exec-env` - bez sekretów rola Jenkinsa celowo zatrzymuje
+  przebieg assertem, zamiast wdrożyć pustą konfigurację,
+- `--limit` przyjmuje nazwy hostów z inventory (`monitoring-1`), nie aliasy
+  SSH (`wf-monitoring-1`),
+- albo po prostu: `make configure` (całość) / `make check` (na sucho, z diffem).
+
+#### C. Make jako pulpit operatora (~1 minuta, dobre otwarcie)
+
+```bash
+make help       # lista wszystkich operacji z opisami
+make status     # zdrowie całości: węzły, pody, kontenery dev, kody HTTP
+make plan       # kod == rzeczywistość: No changes (tunel do API wstaje sam)
+make test-infra # 34 testy dymne, wyłącznie odczyt
+```
+
+`make status` na początku prezentacji ustawia kontekst w 15 sekund: komisja
+widzi klaster, kontenery i działające aplikacje, zanim padnie pierwsze
+pytanie. Reszta pokazu to schodzenie w głąb od tego obrazka.
+
 ### Przygotowanie dzień wcześniej
 
 - [ ] Snapshot wszystkich maszyn (§11) - powrót w kilkanaście sekund, gdyby demo padło
@@ -683,6 +766,11 @@ open https://dev.wolffire.dev
 - [ ] Sesja Cloudflare Access odświeżona (ważna 6 h)
 - [ ] Nagranie pełnego przebiegu pipeline'u jako materiał zapasowy
 - [ ] Karty przeglądarki otwarte: Grafana, Prometheus, Actions, oba repozytoria
+- [ ] Pokazy A-C przećwiczone raz w całości (z zegarkiem)
+- [ ] `ssh -fN wf-k3s-server-1 wf-monitoring-1 wf-wolffire-dev-app-1` - multipleksowanie
+      sprawia, że każde kolejne `ssh` przy komisji wchodzi natychmiast
+- [ ] Odrodzone pliki `CLAUDE.md` skasowane, jeśli pokazujesz katalog na żywo:
+      `find . -iname "claude*.md" -not -path "./.git/*" -delete`
 
 ### Prawdopodobne pytania i gdzie jest odpowiedź
 
