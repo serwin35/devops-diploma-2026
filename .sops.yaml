@@ -1,0 +1,17 @@
+# Reguły szyfrowania SOPS. Każdy plik pasujący do path_regex jest szyfrowany
+# na wskazanych odbiorców age przy `sops <plik>` - nie trzeba podawać klucza ręcznie.
+#
+# SOPS szyfruje wyłącznie WARTOŚCI, nazwy kluczy zostają jawne. Dzięki temu
+# `git diff` pokazuje, który sekret się zmienił, nie ujawniając czym jest.
+#
+# Klucz prywatny: ~/.config/sops/age/keys.txt (nigdy w repozytorium).
+# Odszyfrowanie: SOPS_AGE_KEY_FILE lub domyślna lokalizacja.
+
+keys:
+  - &mateusz age1uh03ryvvtamnh2tzs94x8yqfzc20spuga9679jpkkednvjgccywqsuuye8
+
+creation_rules:
+  - path_regex: \.sops\.ya?ml$
+    key_groups:
+      - age:
+          - *mateusz

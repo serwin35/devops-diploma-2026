@@ -1,0 +1,33 @@
+- name: Zainstaluj UFW
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Kolejność jest krytyczna: reguły wpuszczające muszą istnieć, zanim polityka
+# domyślna przejdzie na deny - inaczej włączenie UFW zrywa bieżącą sesję SSH.
+- name: Dopuść ruch przychodzący
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port | string }}"
+    proto: "{{ item.proto | default('tcp') }}"
+    from_ip: "{{ item.from | default('any') }}"
+    comment: "{{ item.comment }}"
+  loop: "{{ ufw_allowed + ufw_extra }}"
+  loop_control:
+    label: "{{ item.port }}/{{ item.proto | default('tcp') }} od {{ item.from | default('any') }} ({{ item.comment }})"
+
+- name: Ustaw politykę domyślną na odrzucanie ruchu przychodzącego
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+
+- name: Zezwól na ruch wychodzący
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+
+- name: Włącz UFW
+  community.general.ufw:
+    state: enabled

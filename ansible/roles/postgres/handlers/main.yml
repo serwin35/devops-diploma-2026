@@ -1,0 +1,20 @@
+# Debian/Ubuntu trzyma każdy klaster w osobnej instancji jednostki. Operowanie
+# na niej, a nie na zbiorczym `postgresql.service`, daje pewność, że restart
+# faktycznie dotknął naszego klastra.
+- name: restart postgres
+  ansible.builtin.systemd_service:
+    name: "postgresql@{{ postgres_version }}-main"
+    state: restarted
+
+# pg_hba wchodzi przeładowaniem - restart zerwałby otwarte połączenia aplikacji
+# tylko po to, żeby zmienić regułę autoryzacji.
+- name: reload postgres
+  ansible.builtin.systemd_service:
+    name: "postgresql@{{ postgres_version }}-main"
+    state: reloaded
+
+- name: restart postgres_exporter
+  ansible.builtin.systemd_service:
+    name: prometheus-postgres-exporter
+    state: restarted
+    daemon_reload: true

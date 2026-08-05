@@ -1,0 +1,115 @@
+# Wartości domyślne chartu WolfFire.
+#
+# Sekrety (app.key, db.password, redis.password, ghcrUsername, ghcrToken)
+# są celowo puste i oznaczone jako `required` w szablonach - instalacja bez
+# nich ma się wywalić od razu, a nie wystartować z pustą konfiguracją.
+# Podaje je Ansible/pipeline przez --set lub dodatkowy plik values.
+
+image:
+  php:
+    repository: ghcr.io/serwin35/wf-chartapp-diploma/php
+    # Pusty tag = appVersion z Chart.yaml. Pipeline nadpisuje go konkretnym
+    # tagiem builda, żeby rollback helma cofał też wersję obrazu.
+    tag: ""
+  nginx:
+    repository: ghcr.io/serwin35/wf-chartapp-diploma/nginx
+    tag: ""
+  # IfNotPresent zamiast Always - tagi buildów są niemutowalne, więc ponowne
+  # ściąganie tego samego tagu to strata czasu i transferu.
+  pullPolicy: IfNotPresent
+
+# GHCR jest prywatny - chart tworzy z tych wartości Secret dockerconfigjson.
+# Tokenowi wystarczy uprawnienie read:packages.
+ghcrUsername: ""
+ghcrToken: ""
+
+php:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      # Bez limitu CPU - throttling php-fpm psuje czasy odpowiedzi bardziej
+      # niż chwilowy skok CPU szkodzi sąsiadom na węźle.
+      memory: 512Mi
+
+nginx:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+  # Resolver nginx nie korzysta z search domains z /etc/resolv.conf, dlatego
+  # upstream w configu jest pełnym FQDN, a tu wskazujemy DNS klastra.
+  # W k3s CoreDNS wystawia serwis pod nazwą kube-dns.
+  resolver: kube-dns.kube-system.svc.cluster.local
+  clusterDomain: cluster.local
+
+horizon:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+scheduler:
+  # Zawsze 1 replika - druga wykonywałaby te same zadania równolegle.
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+app:
+  env: production
+  # APP_KEY Laravela (format base64:...). Sekret - podaje pipeline.
+  key: ""
+  url: https://wolffire.dev
+  debug: false
+  logLevel: warning
+  sessionLifetime: "120"
+  # local wystarcza na demo. Przy >1 replice php uploady wymagają s3,
+  # bo storage/app to emptyDir per pod - patrz komentarz w deployment-php.
+  filesystemDisk: local
+  # Środowisko dyplomowe nie ma dostępu do systemów zewnętrznych (Nexo, KSeF,
+  # ShipX) - scheduler nie rejestruje jobów synchronizacji.
+  integrationsSyncEnabled: "false"
+
+# Postgres działa poza klastrem (VM 10.0.140.10), dlatego host to adres IP,
+# a nie nazwa serwisu.
+db:
+  host: "10.0.140.10"
+  port: 5432
+  database: wolffire
+  username: wolffire
+  # Sekret - podaje pipeline.
+  password: ""
+
+# Redis również poza klastrem, na tej samej maszynie co Postgres.
+redis:
+  host: "10.0.140.10"
+  port: 6379
+  # Sekret - podaje pipeline.
+  password: ""
+
+mail:
+  fromAddress: alerty@wolffire.dev
+
+ingress:
+  enabled: true
+  # Traefik wbudowany w k3s.
+  className: traefik
+  host: wolffire.dev
+  # TLS terminuje się przed klastrem (Cloudflare/Traefik z certem origin),
+  # dlatego domyślnie pusto. Format jak w natywnym polu tls Ingressu.
+  tls: []
+
+nameOverride: ""
+fullnameOverride: ""

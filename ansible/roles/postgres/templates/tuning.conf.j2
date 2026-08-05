@@ -1,0 +1,45 @@
+# Zarządzane przez Ansible. Zmiany na maszynie znikną przy następnym
+# uruchomieniu playbooka.
+#
+# Plik jest wczytywany przez `include_dir = 'conf.d'` z postgresql.conf i
+# nadpisuje wartości z pakietu. Trzymamy się dokładki zamiast szablonu całego
+# postgresql.conf, bo dzięki temu widać wyłącznie nasze odstępstwa od domyślnych
+# ustawień, a aktualizacja pakietu nie wchodzi w konflikt z naszym plikiem.
+#
+# Uzasadnienie doboru wartości: roles/postgres/defaults/main.yml.
+
+# Wyłącznie adres wewnętrzny. 0.0.0.0 wystawiałoby bazę na każdym interfejsie,
+# localhost odciąłby klaster k3s. Zmiana wymaga restartu, nie przeładowania.
+listen_addresses = '{{ private_ip }}'
+port = {{ postgres_port }}
+max_connections = {{ postgres_max_connections }}
+
+# Pamięć
+shared_buffers = {{ postgres_shared_buffers }}
+effective_cache_size = {{ postgres_effective_cache_size }}
+work_mem = {{ postgres_work_mem }}
+maintenance_work_mem = {{ postgres_maintenance_work_mem }}
+
+# WAL i checkpointy
+wal_buffers = 16MB
+checkpoint_completion_target = 0.9
+max_wal_size = {{ postgres_max_wal_size }}
+min_wal_size = {{ postgres_min_wal_size }}
+
+# Planner pod dysk NVMe
+random_page_cost = {{ postgres_random_page_cost }}
+effective_io_concurrency = {{ postgres_effective_io_concurrency }}
+
+# Wymuszone jawnie, mimo że w 18 jest to wartość domyślna: bez tego ustawienia
+# hasło utworzone przez playbooka mogłoby zostać zapisane słabszym algorytmem,
+# a wpisy scram-sha-256 w pg_hba przestałyby działać.
+password_encryption = 'scram-sha-256'
+
+# Logi
+log_min_duration_statement = {{ postgres_log_min_duration }}
+log_checkpoints = on
+log_lock_waits = on
+# Kto i skąd się połączył - przy jednym użytkowniku aplikacyjnym to jedyny ślad
+# pozwalający odróżnić ruch aplikacji od ręcznego połączenia administratora.
+log_connections = on
+log_disconnections = off

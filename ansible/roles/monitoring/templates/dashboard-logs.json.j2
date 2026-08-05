@@ -1,0 +1,103 @@
+{
+  "title": "WolfFire - logi",
+  "uid": "wolffire-logs",
+  "tags": ["wolffire", "logi"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "host",
+        "label": "Maszyna",
+        "type": "query",
+        "datasource": "Loki",
+        "query": { "label": "host", "refId": "host" },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "job",
+        "label": "Źródło",
+        "type": "query",
+        "datasource": "Loki",
+        "query": { "label": "job", "refId": "job" },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "szukaj",
+        "label": "Szukaj w treści",
+        "type": "textbox",
+        "query": "",
+        "current": { "text": "", "value": "" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Natężenie logów",
+      "description": "Liczba wpisów na sekundę w rozbiciu na maszyny. Nagły skok zwykle poprzedza awarię.",
+      "datasource": "Loki",
+      "gridPos": { "h": 6, "w": 16, "x": 0, "y": 0 },
+      "targets": [{
+        "expr": "sum by (host) (rate({host=~\"$host\", job=~\"$job\"} |~ \"$szukaj\" [1m]))",
+        "legendFormat": "{{ '{{host}}' }}",
+        "refId": "A"
+      }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Błędy i ostrzeżenia",
+      "description": "Wpisy zawierające error, warn, fail lub fatal - niezależnie od źródła.",
+      "datasource": "Loki",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "targets": [{
+        "expr": "sum by (host) (rate({host=~\"$host\", job=~\"$job\"} |~ \"(?i)(error|warn|fail|fatal)\" [1m]))",
+        "legendFormat": "{{ '{{host}}' }}",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "red" } } }
+    },
+    {
+      "type": "logs",
+      "title": "Logi kontenerów",
+      "description": "Wszystko, co piszą kontenery na stdout i stderr - zbierane przez Alloy prosto z Dockera.",
+      "datasource": "Loki",
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 6 },
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "enableLogDetails": true
+      },
+      "targets": [{
+        "expr": "{job=\"docker\", host=~\"$host\"} |~ \"$szukaj\"",
+        "refId": "A"
+      }]
+    },
+    {
+      "type": "logs",
+      "title": "Logi systemowe (journald)",
+      "description": "Usługi systemd: sshd, docker, cloudflared, fail2ban, k3s.",
+      "datasource": "Loki",
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 17 },
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true,
+        "enableLogDetails": true
+      },
+      "targets": [{
+        "expr": "{job=\"systemd-journal\", host=~\"$host\"} |~ \"$szukaj\"",
+        "refId": "A"
+      }]
+    }
+  ]
+}

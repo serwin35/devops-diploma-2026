@@ -1,0 +1,61 @@
+# Wersja przypięta świadomie. PGDG wystawia równolegle wiele gałęzi, więc
+# "najnowszy postgresql" oznaczałby ciche przejście na kolejną wersję major
+# przy zwykłym `apt upgrade` - z niekompatybilnym katalogiem danych.
+postgres_version: 18
+
+postgres_db_name: wolffire
+postgres_db_user: wolffire
+# Hasło pochodzi z group_vars/all/secrets.sops.yml (wolffire_db_password).
+
+postgres_port: 5432
+postgres_exporter_port: 9187
+
+# Konto systemowe, z którego startuje prometheus-postgres-exporter. Ta sama
+# nazwa musi istnieć jako rola w bazie - eksporter loguje się przez gniazdo
+# lokalne metodą peer, więc żadne hasło do bazy nie ląduje na dysku.
+postgres_exporter_system_user: prometheus
+
+# --- Strojenie pod 3 GB RAM dzielone z Redisem ---
+#
+# Budżet pamięci maszyny: ~0.4 GB system, ~0.5 GB Redis (maxmemory + zapas na
+# fork przy przepisywaniu AOF), reszta dla Postgresa i cache stron jądra.
+# Standardowe kalkulatory (pgtune) liczą procenty od CAŁEJ pamięci maszyny -
+# tutaj byłoby to błędne, bo Postgres nie jest jedynym lokatorem.
+
+# 512 MB, czyli ~17% RAM zamiast podręcznikowych 25%. Powyżej tej wartości
+# Postgres i Redis zaczynają konkurować o te same strony, a przy noeviction
+# w Redisie przegrana strona oznacza błędy zapisu w kolejkach, nie spowolnienie.
+postgres_shared_buffers: 512MB
+
+# Nie alokuje pamięci - to podpowiedź dla plannera, ile danych realnie siedzi
+# w cache (shared_buffers + cache stron jądra). Zaniżona wartość zniechęcałaby
+# planner do indeksów i produkowała seq scany na tabelach, które są w RAM.
+postgres_effective_cache_size: 1280MB
+
+# Limit NA OPERACJĘ sortowania/haszowania, nie na połączenie. Przy 100
+# połączeniach i kilku operacjach na zapytanie 8 MB dawałoby scenariusz
+# katastrofalny (>1.5 GB) - 4 MB trzyma najgorszy przypadek w okolicy 800 MB.
+postgres_work_mem: 4MB
+
+# VACUUM, CREATE INDEX, ALTER TABLE. Trzech domyślnych workerów autovacuum może
+# wziąć po tyle naraz, więc 128 MB to szczyt ~384 MB - krótki i tylko w tle.
+postgres_maintenance_work_mem: 128MB
+
+# Laravel nie ma pulera po stronie serwera; każdy proces php-fpm i każdy worker
+# Horizona trzyma własne połączenie. 100 pokrywa realny ruch, a jednocześnie
+# ogranicza sumę work_mem. Więcej niż to wymagałoby PgBouncera, nie większego
+# max_connections - każde połączenie to osobny proces backendu.
+postgres_max_connections: 100
+
+# Dysk to NVMe. Domyślne random_page_cost=4.0 opisuje talerz i sprawia, że
+# planner wybiera seq scan tam, gdzie indeks byłby szybszy.
+postgres_random_page_cost: "1.1"
+postgres_effective_io_concurrency: 200
+
+# Rzadsze i bardziej rozłożone w czasie checkpointy - mniej skoków I/O kosztem
+# dłuższego odtwarzania po awarii.
+postgres_max_wal_size: 1GB
+postgres_min_wal_size: 128MB
+
+# Zapytania wolniejsze niż to trafiają do logu, który Alloy wysyła do Loki.
+postgres_log_min_duration: 500ms

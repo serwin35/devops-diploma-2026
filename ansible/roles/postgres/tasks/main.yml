@@ -1,0 +1,257 @@
+# Baza produkcyjna aplikacji Laravel działającej na k3s. Postgres i Redis stoją
+# na tej samej maszynie (3 GB RAM), więc obie role muszą się zmieścić w jednym
+# budżecie pamięci - patrz komentarze w defaults/main.yml obu ról.
+
+- name: Otwórz porty bazy i eksportera
+  ansible.builtin.include_role:
+    name: security
+    tasks_from: open_ports
+  vars:
+    ports:
+      - { port: "{{ postgres_port }}", from: "{{ k3s_subnet }}", comment: "Postgres z klastra" }
+      # pg_dump w jobie backupowym Jenkinsa - pojedynczy adres CI/CD, nie cały segment.
+      - { port: "{{ postgres_port }}", from: "{{ cicd_ip }}", comment: "Postgres dla kopii z CI/CD" }
+      - { port: "{{ postgres_exporter_port }}", from: "{{ monitoring_ip }}", comment: "postgres_exporter" }
+  tags: [postgres]
+
+- name: Utwórz katalog na klucze APT
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+  tags: [postgres]
+
+# Repozytorium PGDG, a nie pakiet z Ubuntu: 24.04 wozi Postgresa 16 i zostanie
+# przy nim do końca wsparcia. PGDG daje wersję 18 i wypuszcza poprawki
+# bezpieczeństwa w dniu wydania upstreamu, więc nie jesteśmy zależni od cyklu
+# backportów dystrybucji.
+- name: Pobierz klucz GPG PGDG
+  ansible.builtin.get_url:
+    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    dest: /etc/apt/keyrings/postgresql.asc
+    mode: "0644"
+  tags: [postgres]
+
+- name: Dodaj repozytorium PGDG
+  ansible.builtin.deb822_repository:
+    name: pgdg
+    types: [deb]
+    uris: https://apt.postgresql.org/pub/repos/apt
+    suites: ["{{ ansible_distribution_release }}-pgdg"]
+    components: [main]
+    signed_by: /etc/apt/keyrings/postgresql.asc
+    enabled: true
+    state: present
+  tags: [postgres]
+
+# psycopg2 nie jest wygodą, tylko wymogiem - bez niego moduły community.postgresql
+# nie mają czym rozmawiać z bazą. acl pozwala przekazać plik tymczasowy do
+# `become_user: postgres` bez rozluźniania uprawnień w /tmp.
+- name: Zainstaluj Postgresa i zależności
+  ansible.builtin.apt:
+    name:
+      - "postgresql-{{ postgres_version }}"
+      - "postgresql-client-{{ postgres_version }}"
+      - python3-psycopg2
+      - acl
+    state: present
+    update_cache: true
+  tags: [postgres]
+
+- name: Utwórz katalog dokładek konfiguracji
+  ansible.builtin.file:
+    path: "/etc/postgresql/{{ postgres_version }}/main/conf.d"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0755"
+  tags: [postgres]
+
+- name: Wygeneruj strojenie
+  ansible.builtin.template:
+    src: tuning.conf.j2
+    dest: "/etc/postgresql/{{ postgres_version }}/main/conf.d/10-wolffire.conf"
+    owner: postgres
+    group: postgres
+    mode: "0644"
+  notify: restart postgres
+  tags: [postgres]
+
+- name: Wygeneruj pg_hba
+  ansible.builtin.template:
+    src: pg_hba.conf.j2
+    dest: "/etc/postgresql/{{ postgres_version }}/main/pg_hba.conf"
+    owner: postgres
+    group: postgres
+    mode: "0640"
+  notify: reload postgres
+  tags: [postgres]
+
+- name: Włącz Postgresa
+  ansible.builtin.systemd_service:
+    name: postgresql
+    state: started
+    enabled: true
+  tags: [postgres]
+
+# Kolejne zadania łączą się z bazą. Bez wymuszenia handlerów leciałyby na
+# konfiguracji sprzed szablonu - w skrajnym przypadku tworząc hasło algorytmem
+# innym niż wymaga pg_hba.
+- name: Zastosuj zmiany konfiguracji przed pracą na bazie
+  ansible.builtin.meta: flush_handlers
+  tags: [postgres]
+
+- name: Utwórz użytkownika aplikacji
+  community.postgresql.postgresql_user:
+    name: "{{ postgres_db_user }}"
+    password: "{{ wolffire_db_password }}"
+    role_attr_flags: LOGIN,NOSUPERUSER,NOCREATEDB,NOCREATEROLE
+    state: present
+  become: true
+  become_user: postgres
+  # Hasło w logu Ansible zostałoby tam na stałe - maszyny CI zbierają te logi.
+  no_log: true
+  tags: [postgres]
+
+- name: Utwórz bazę aplikacji
+  community.postgresql.postgresql_db:
+    name: "{{ postgres_db_name }}"
+    owner: "{{ postgres_db_user }}"
+    encoding: UTF-8
+    state: present
+  become: true
+  become_user: postgres
+  tags: [postgres]
+
+# Domyślnie każda rola w bazie ma prawo CREATE w schemacie public. W Postgresie
+# 15+ jest to już odebrane, ale samo CONNECT do nowej bazy nadal przysługuje
+# wszystkim - odbieramy je, żeby rola eksportera nie widziała danych aplikacji.
+- name: Odbierz publiczny dostęp do bazy aplikacji
+  community.postgresql.postgresql_privs:
+    database: "{{ postgres_db_name }}"
+    type: database
+    obj: "{{ postgres_db_name }}"
+    role: PUBLIC
+    privs: CONNECT
+    state: absent
+  become: true
+  become_user: postgres
+  tags: [postgres]
+
+- name: Utwórz rolę eksportera metryk
+  community.postgresql.postgresql_user:
+    name: "{{ postgres_exporter_system_user }}"
+    role_attr_flags: LOGIN,NOSUPERUSER,NOCREATEDB,NOCREATEROLE
+    state: present
+  become: true
+  become_user: postgres
+  tags: [postgres]
+
+# pg_monitor to wbudowana rola dająca wgląd w statystyki i widoki systemowe bez
+# prawa czytania danych. Nadanie eksporterowi superusera byłoby prostsze
+# i oznaczałoby konto z pełną władzą nad bazą wystawione na porcie metryk.
+- name: Nadaj eksporterowi uprawnienia pg_monitor
+  community.postgresql.postgresql_membership:
+    group: pg_monitor
+    target_roles: "{{ postgres_exporter_system_user }}"
+    state: present
+  become: true
+  become_user: postgres
+  tags: [postgres]
+
+# Eksporter jako pakiet dystrybucji, nie kontener: maszyna celowo nie należy do
+# grupy `docker` (baza produkcyjna nie ma powodu utrzymywać demona kontenerów
+# ani jego gniazda z uprawnieniami roota). Pakiet dostaje jednostkę systemd,
+# konto systemowe i poprawki bezpieczeństwa razem z unattended-upgrades - dla
+# procesu, który tylko odpytuje lokalną bazę, to mniej ruchomych części niż
+# własna binarka pobierana z GitHuba.
+- name: Zainstaluj postgres_exporter
+  ansible.builtin.apt:
+    name: prometheus-postgres-exporter
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  tags: [postgres]
+
+# Jednostka z pakietu startuje jako konto systemowe - pg_hba ufa mu metodą peer,
+# więc nazwa musi się zgadzać. Pinujemy ją jawnie, żeby zmiana w pakiecie nie
+# zerwała po cichu uwierzytelnienia eksportera.
+- name: Utwórz katalog dokładek jednostki eksportera
+  ansible.builtin.file:
+    path: /etc/systemd/system/prometheus-postgres-exporter.service.d
+    state: directory
+    mode: "0755"
+  tags: [postgres]
+
+- name: Wymuś konto systemowe eksportera
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/prometheus-postgres-exporter.service.d/10-user.conf
+    mode: "0644"
+    content: |
+      # Zarządzane przez Ansible.
+      [Service]
+      User={{ postgres_exporter_system_user }}
+  notify: restart postgres_exporter
+  tags: [postgres]
+
+- name: Skonfiguruj postgres_exporter
+  ansible.builtin.copy:
+    dest: /etc/default/prometheus-postgres-exporter
+    mode: "0644"
+    content: |
+      # Zarządzane przez Ansible.
+      #
+      # Połączenie przez gniazdo lokalne (host=/var/run/postgresql), a nie po TCP:
+      # metoda peer nie wymaga hasła, więc ten plik nie zawiera żadnego sekretu.
+      DATA_SOURCE_NAME="postgresql:///postgres?host=/var/run/postgresql&sslmode=disable&user={{ postgres_exporter_system_user }}"
+      ARGS="--web.listen-address={{ private_ip }}:{{ postgres_exporter_port }}"
+  notify: restart postgres_exporter
+  tags: [postgres]
+
+- name: Włącz postgres_exporter
+  ansible.builtin.systemd_service:
+    name: prometheus-postgres-exporter
+    state: started
+    enabled: true
+    daemon_reload: true
+  tags: [postgres]
+
+- name: Zastosuj zmiany przed weryfikacją
+  ansible.builtin.meta: flush_handlers
+  tags: [postgres]
+
+# Weryfikacja kończąca rolę. Sam fakt, że systemd uznał usługę za "running", nie
+# mówi nic o tym, czy baza przyjmuje połączenia na właściwym adresie - a właśnie
+# tam łączy się klaster.
+- name: Sprawdź, że Postgres odpowiada na adresie wewnętrznym
+  ansible.builtin.command:
+    cmd: "pg_isready -h {{ private_ip }} -p {{ postgres_port }}"
+  register: pg_ready
+  retries: 6
+  delay: 5
+  until: pg_ready.rc == 0
+  changed_when: false
+  # Weryfikacja jest odczytem, więc idzie także w --check. Inaczej zadanie
+  # zostaje pominięte, rejestr jest pusty i until/failed_when wywala przebieg.
+  check_mode: false
+  tags: [postgres]
+
+# `pg_up 1` to jedyny dowód, że eksporter nie tylko wstał, ale i zalogował się
+# do bazy. Sam kod 200 zwróciłby również eksporter z błędną konfiguracją
+# połączenia - w Grafanie objawiłoby się to pustym dashboardem.
+- name: Sprawdź, że eksporter zwraca metryki bazy
+  ansible.builtin.uri:
+    url: "http://{{ private_ip }}:{{ postgres_exporter_port }}/metrics"
+    return_content: true
+  register: pg_exporter_metrics
+  retries: 6
+  delay: 5
+  until: pg_exporter_metrics.status is defined and pg_exporter_metrics.status == 200
+  changed_when: false
+  failed_when: >-
+    pg_exporter_metrics.status != 200
+    or 'pg_up 1' not in pg_exporter_metrics.content
+  # Weryfikacja jest odczytem, więc idzie także w --check. Inaczej zadanie
+  # zostaje pominięte, rejestr jest pusty i until/failed_when wywala przebieg.
+  check_mode: false
+  tags: [postgres]

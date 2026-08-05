@@ -1,0 +1,45 @@
+#cloud-config
+package_update: true
+
+users:
+  - name: ${ansible_user}
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+%{ for key in ssh_public_keys ~}
+      - ${key}
+%{ endfor ~}
+
+packages:
+  - qemu-guest-agent
+  - python3
+
+write_files:
+  # Ubuntu 24.04 startuje sshd przez aktywację gniazda systemd, przez co dyrektywa
+  # Port w sshd_config jest ignorowana. Port zmienia się wyłącznie tym overridem.
+  #
+  # Oba wpisy ListenStream są konieczne. Jednostka systemowa ustawia
+  # BindIPv6Only=ipv6-only, więc gniazdo [::] NIE obsługuje IPv4 - gołe
+  # "ListenStream=<port>" zbindowałoby się wyłącznie do IPv6 i maszyna byłaby
+  # nieosiągalna po IPv4 (połączenie odrzucane, nie filtrowane).
+  - path: /etc/systemd/system/ssh.socket.d/override.conf
+    permissions: "0644"
+    content: |
+      [Socket]
+      ListenStream=
+      ListenStream=0.0.0.0:${ssh_port}
+      ListenStream=[::]:${ssh_port}
+
+  - path: /etc/ssh/sshd_config.d/99-hardening.conf
+    permissions: "0644"
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+  - systemctl daemon-reload
+  - systemctl restart ssh.socket

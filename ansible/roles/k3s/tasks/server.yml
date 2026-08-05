@@ -1,0 +1,89 @@
+# Ingress klastra stoi na control plane (Traefik), więc 80/443 otwieramy tylko
+# tutaj. Źródłem jest wyłącznie bastion - to on terminuje tunel Cloudflare
+# i jest jedynym punktem wejścia ruchu z zewnątrz.
+- name: Otwórz porty ingressu
+  ansible.builtin.include_role:
+    name: security
+    tasks_from: open_ports
+  vars:
+    ports:
+      - { port: 80, from: "{{ bastion_ip }}", comment: "Traefik HTTP z bastionu" }
+      - { port: 443, from: "{{ bastion_ip }}", comment: "Traefik HTTPS z bastionu" }
+  tags: [k3s]
+
+- name: Sprawdź zainstalowaną wersję k3s
+  ansible.builtin.command: /usr/local/bin/k3s --version
+  register: k3s_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: [k3s]
+
+- name: Zainstaluj control plane
+  ansible.builtin.command:
+    cmd: "{{ k3s_install_script_path }}"
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    INSTALL_K3S_EXEC: "server {{ k3s_server_args | join(' ') }}"
+    K3S_TOKEN: "{{ k3s_token }}"
+  when: k3s_force_install or k3s_version not in (k3s_installed.stdout | default(''))
+  changed_when: true
+  notify: restart k3s
+  tags: [k3s]
+
+- name: Włącz usługę k3s
+  ansible.builtin.systemd_service:
+    name: k3s
+    state: started
+    enabled: true
+  tags: [k3s]
+
+- name: Poczekaj na kubeconfig wygenerowany przez k3s
+  ansible.builtin.wait_for:
+    path: /etc/rancher/k3s/k3s.yaml
+    timeout: 180
+  tags: [k3s]
+
+# Sam fakt, że usługa działa, nie oznacza jeszcze działającego API - bez tego
+# kolejne zadania (i rola wdrażająca aplikację) trafiałyby na "connection refused".
+- name: Poczekaj, aż control plane zgłosi gotowość
+  ansible.builtin.command: k3s kubectl get nodes --no-headers
+  register: k3s_server_ready
+  changed_when: false
+  failed_when: false
+  retries: "{{ k3s_ready_retries }}"
+  delay: "{{ k3s_ready_delay }}"
+  until: k3s_server_ready.rc == 0 and k3s_server_ready.stdout is search('\sReady\s')
+  # Weryfikacja jest odczytem, więc idzie także w --check. Inaczej zadanie
+  # zostaje pominięte, rejestr jest pusty i until/failed_when wywala przebieg.
+  check_mode: false
+  tags: [k3s]
+
+- name: Utwórz katalog na kubeconfig konta maszynowego
+  ansible.builtin.file:
+    path: "{{ k3s_kubeconfig_path | dirname }}"
+    state: directory
+    owner: "{{ k3s_kubeconfig_owner }}"
+    group: "{{ k3s_kubeconfig_owner }}"
+    mode: "0700"
+  tags: [k3s]
+
+- name: Odczytaj kubeconfig klastra
+  ansible.builtin.slurp:
+    src: /etc/rancher/k3s/k3s.yaml
+  register: k3s_kubeconfig_raw
+  tags: [k3s]
+
+# k3s wpisuje do kubeconfigu adres 127.0.0.1, który działa wyłącznie z tej jednej
+# maszyny. Podmiana na adres prywatny sprawia, że ten sam plik nadaje się do
+# skopiowania na bastion czy maszynę CI. Kopiujemy treścią, a nie remote_src -
+# inaczej każde uruchomienie zgłaszałoby zmianę (kopia różni się od źródła).
+- name: Wgraj kubeconfig na konto maszynowe
+  ansible.builtin.copy:
+    content: "{{ k3s_kubeconfig_raw.content | b64decode | replace('https://127.0.0.1:' ~ k3s_api_port, k3s_server_url) }}"
+    dest: "{{ k3s_kubeconfig_path }}"
+    owner: "{{ k3s_kubeconfig_owner }}"
+    group: "{{ k3s_kubeconfig_owner }}"
+    # Plik zawiera certyfikat klienta z uprawnieniami administratora klastra.
+    mode: "0600"
+  tags: [k3s]

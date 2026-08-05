@@ -1,0 +1,27 @@
+# Zarządzane przez Ansible.
+#
+# Wtyczki są wpiekane w obraz, a nie dociągane przy starcie kontenera
+# (JENKINS_PLUGIN_INFO / skrypt w init.groovy.d). Powody:
+#
+#  1. Start kontrolera nie zależy od dostępności update center. Przy instalacji
+#     "w locie" awaria updates.jenkins.io albo brak sieci w chwili restartu
+#     oznacza Jenkinsa, który wstaje bez wtyczek - czyli bez JCasC, bez chmury
+#     agentów i bez zadań.
+#  2. Błędy rozwiązywania zależności wychodzą przy budowaniu obrazu, a nie
+#     na wpół wstałej instancji produkcyjnej.
+#  3. Restart jest szybki i powtarzalny: ten sam obraz to ten sam zestaw wtyczek.
+#     Instalacja przy starcie potrafi dociągnąć nowsze wydanie i po cichu
+#     zmienić zachowanie działającej instancji.
+FROM {{ jenkins_base_image }}
+
+COPY plugins.txt /usr/share/jenkins/ref/plugins.txt
+
+# Świadomie BEZ --latest false. Ta flaga każe pobrać minimalną wersję każdej
+# zależności, a te minima nie są ze sobą spójne: pipeline-model-extensions
+# wymaga workflow-cps 4183+, podczas gdy minimum innej wtyczki z listy to 4150.
+# Kontroler wstawał wtedy bez całej rodziny wtyczek pipeline'owych
+# ("Failed Loading plugin ... Update required") i bez JCasC. Domyślne
+# zachowanie rozwiązuje graf spójnie, a powtarzalność zapewnia przypięty obraz
+# bazowy plus to, że obraz przebudowuje się wyłącznie przy zmianie tego pliku
+# albo listy wtyczek (tag obrazu = skrót z ich treści).
+RUN jenkins-plugin-cli --plugin-file /usr/share/jenkins/ref/plugins.txt

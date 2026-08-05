@@ -1,0 +1,49 @@
+# Wersja przypięta świadomie - "latest" oznacza, że odtworzenie klastra za pół
+# roku da inny wynik niż dziś. Linia 1.31 z kanału stable.
+k3s_version: v1.31.5+k3s1
+
+k3s_install_script_url: https://get.k3s.io
+k3s_install_script_path: /usr/local/bin/k3s-install.sh
+
+k3s_api_port: 6443
+k3s_kubelet_port: 10250
+k3s_flannel_port: 8472
+
+# API otwarte na całą sieć prywatną, nie tylko na segment k3s: wdrożenia lecą
+# z maszyny CI/CD (10.0.120.10), a kubeconfig bywa używany z bastionu.
+k3s_api_allowed_cidr: 10.0.0.0/16
+
+# Control plane jest jeden - pierwszy (i jedyny) host grupy k3s_server.
+k3s_server_ip: "{{ hostvars[groups['k3s_server'][0]].private_ip }}"
+k3s_server_url: "https://{{ k3s_server_ip }}:{{ k3s_api_port }}"
+
+# Traefik zostaje włączony (brak --disable traefik) - to on jest ingressem
+# klastra i przyjmuje ruch HTTP/HTTPS z bastionu.
+#
+# Maszyny mają dwa interfejsy, więc bez wskazania adresu k3s wybrałby pierwszy
+# lepszy: node-ip ustawia adres węzła w klastrze, advertise-address adres w
+# kubeconfigu i w certyfikacie, tls-san dopisuje ten adres do SAN certyfikatu
+# (inaczej połączenie po IP prywatnym kończy się błędem weryfikacji nazwy).
+k3s_server_args:
+  - "--node-ip {{ private_ip }}"
+  - "--advertise-address {{ private_ip }}"
+  - "--tls-san {{ private_ip }}"
+
+k3s_agent_args:
+  - "--node-ip {{ private_ip }}"
+
+# Konto maszynowe dostaje własny kubeconfig - dzięki temu `kubectl` działa bez
+# sudo i bez czytania /etc/rancher/k3s/k3s.yaml należącego do roota.
+k3s_kubeconfig_owner: ansible
+k3s_kubeconfig_path: "/home/{{ k3s_kubeconfig_owner }}/.kube/config"
+
+# Pobranie obrazów i start control plane na maszynie z 3 GB RAM to kilka minut.
+k3s_ready_retries: 30
+k3s_ready_delay: 10
+
+# Skrypt instalacyjny zapisuje flagi startowe do unitu systemd, więc sama zmiana
+# k3s_server_args nie ma żadnego efektu na już skonfigurowanej maszynie.
+# Wymusza się ją przez `-e k3s_force_install=true`.
+k3s_force_install: false
+
+# k3s_token celowo nie ma tu wartości domyślnej - patrz komentarz w tasks/main.yml.

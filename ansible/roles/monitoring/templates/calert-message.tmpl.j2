@@ -1,0 +1,17 @@
+{# Szablon wiadomości Google Chat dla calert.                                  #}
+{# Blok raw jest konieczny: w środku są znaczniki szablonu Go ({{ }}), których #}
+{# Jinja nie może przetworzyć. Poza blokiem podstawiamy własne zmienne Ansible.#}
+{% raw %}
+{{ if eq .Status "firing" }}{{ if eq .Labels.severity "critical" }}🔴{{ else if eq .Labels.severity "warning" }}🟡{{ else }}🔵{{ end }}{{ else }}✅{{ end }} *{{ if .Annotations.summary }}{{ .Annotations.summary }}{{ else }}{{ .Labels.alertname }}{{ end }}*
+
+{{ if .Annotations.description }}{{ .Annotations.description }}
+
+{{ end }}*Alert:* `{{ .Labels.alertname }}`
+*Maszyna:* `{{ .Labels.instance }}`
+*Waga:* {{ .Labels.severity | toUpper }} · *Stan:* {{ if eq .Status "firing" }}AKTYWNY{{ else }}ROZWIĄZANY{{ end }}
+{{ if .Labels.mountpoint }}*Punkt montowania:* `{{ .Labels.mountpoint }}`
+{{ end }}{{ if .Labels.job }}*Zbierane przez:* `{{ .Labels.job }}`
+{{ end }}
+{% endraw %}
+<https://grafana.{{ public_zone }}|📊 Grafana> · <https://prometheus.{{ public_zone }}/alerts|🔥 Prometheus> · <https://alerts.{{ public_zone }}|🔕 Wycisz>
+_WolfFire · {{ inventory_hostname }}_

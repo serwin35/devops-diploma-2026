@@ -1,0 +1,205 @@
+# Krok zerowy, uruchamiany raz na świeżo zainstalowanym Proxmoxie z OVH.
+# Rozwiązuje problem kury i jajka: Terraform potrzebuje użytkownika i tokenu API,
+# a jedno i drugie może powstać dopiero na działającym hoście.
+#
+# Pierwsze uruchomienie łączy się rootem na porcie 22:
+#   ansible-playbook bootstrap-host.yml
+# Po przełączeniu SSH na 22022 kolejne przebiegi idą już nowym portem:
+#   ansible-playbook bootstrap-host.yml -e bootstrap_ssh_port=22022
+#
+# Idempotentny - można go puszczać wielokrotnie.
+- name: Bootstrap hosta Proxmoxa
+  hosts: proxmox
+  become: false
+  gather_facts: true
+
+  vars:
+    ansible_user: root
+    ansible_port: "{{ bootstrap_ssh_port | default(22) }}"
+
+    ssh_port: 22022
+    # Pierwszy przebieg zostawia port 22 otwarty obok nowego, żeby błąd w konfiguracji
+    # nie odciął dostępu do serwera. Po sprawdzeniu, że 22022 działa, uruchom
+    # ponownie z -e keep_legacy_ssh_port=false.
+    keep_legacy_ssh_port: true
+
+    # ZFS na Linuksie domyślnie oddaje ARC-owi połowę RAM-u - przy 31 GB to ponad
+    # 15 GB, czyli więcej niż przewidziano na wszystkie maszyny razem.
+    zfs_arc_max_gib: 3
+
+    service_accounts:
+      - name: ansible
+        comment: "Konto maszynowe Ansible"
+        public_keys: "{{ [lookup('file', '../keys/ansible_ed25519.pub')] + human_keys }}"
+      - name: terraform
+        comment: "Konto maszynowe Terraform - wyłącznie upload snippetów cloud-init"
+        public_keys: "{{ [lookup('file', '../keys/terraform_ed25519.pub')] }}"
+
+  pre_tasks:
+    # Klucze imienne z keys/humans/ lądują na koncie ansible obok klucza maszynowego,
+    # żeby dało się wejść ręcznie bez uruchamiania Ansible.
+    - name: Wczytaj klucze osobiste
+      ansible.builtin.set_fact:
+        human_keys: "{{ (human_keys | default([])) + [lookup('file', item)] }}"
+      loop: "{{ query('fileglob', '../keys/humans/*.pub') }}"
+      loop_control:
+        label: "{{ item | basename }}"
+
+  tasks:
+    # --- ZFS ------------------------------------------------------------------
+
+    - name: Ogranicz ARC ZFS-a
+      ansible.builtin.copy:
+        dest: /etc/modprobe.d/zfs.conf
+        mode: "0644"
+        content: |
+          # Zarządzane przez Ansible.
+          # Bez tego ARC sięga 50% RAM-u i maszynom brakuje pamięci.
+          options zfs zfs_arc_max={{ (zfs_arc_max_gib | int) * 1024 * 1024 * 1024 }}
+      notify: update initramfs
+
+    # sysfs nie znosi atomowego zapisu przez plik tymczasowy, więc nie modułem copy.
+    - name: Zastosuj limit ARC bez restartu
+      ansible.builtin.shell: >-
+        echo {{ (zfs_arc_max_gib | int) * 1024 * 1024 * 1024 }}
+        > /sys/module/zfs/parameters/zfs_arc_max
+      changed_when: false
+
+    # --- konta maszynowe ------------------------------------------------------
+
+    - name: Załóż konta maszynowe
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        comment: "{{ item.comment }}"
+        shell: /bin/bash
+        password: "!"
+        create_home: true
+      loop: "{{ service_accounts }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Rozłóż klucze publiczne
+      ansible.posix.authorized_key:
+        user: "{{ item.0.name }}"
+        key: "{{ item.1 }}"
+        state: present
+        exclusive: false
+      loop: "{{ service_accounts | subelements('public_keys') }}"
+      loop_control:
+        label: "{{ item.0.name }}: {{ item.1.split()[-1] }}"
+
+    - name: Nadaj sudo bez hasła
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/{{ item.name }}"
+        mode: "0440"
+        content: "{{ item.name }} ALL=(ALL) NOPASSWD:ALL\n"
+        validate: /usr/sbin/visudo -csf %s
+      loop: "{{ service_accounts }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # --- SSH ------------------------------------------------------------------
+    # Debian 13 startuje sshd przez ssh.service (nie przez aktywację gniazda, jak
+    # Ubuntu 24.04 na maszynach gości), więc dyrektywa Port działa normalnie.
+
+    # sshd bierze PIERWSZĄ napotkaną wartość każdej dyrektywy, a pliki z katalogu
+    # sshd_config.d wciąga w kolejności leksykograficznej. Obraz OVH zostawia tu
+    # 50-cloud-init.conf z `PasswordAuthentication yes`, który z tego powodu
+    # wygrywał z utwardzeniem w 99-hardening.conf - host przyjmował hasło mimo
+    # jawnego `PasswordAuthentication no` niżej.
+    #
+    # Stąd prefiks 00: te dyrektywy muszą być odczytane jako pierwsze. Zamiast
+    # kasować plik cloud-inita (który wróci przy kolejnym uruchomieniu modułu),
+    # przykrywamy go wpisem o wyższym priorytecie.
+    - name: Zabezpiecz uwierzytelnianie przed dyrektywami cloud-inita
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/00-hardening.conf
+        mode: "0644"
+        content: |
+          # Zarządzane przez Ansible.
+          # Musi być wczytane przed 50-cloud-init.conf - pierwsza wartość wygrywa.
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          PermitRootLogin prohibit-password
+      notify: restart sshd
+
+    - name: Utwardź SSH
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/99-hardening.conf
+        mode: "0644"
+        content: |
+          # Zarządzane przez Ansible.
+          Port {{ ssh_port }}
+          {% if keep_legacy_ssh_port %}
+          Port 22
+          {% endif %}
+          PermitRootLogin prohibit-password
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+      notify: restart sshd
+
+    # Restart dopiero po sprawdzeniu składni - błąd tutaj oznaczałby utratę dostępu.
+    - name: Sprawdź konfigurację sshd
+      ansible.builtin.command: /usr/sbin/sshd -t
+      changed_when: false
+
+    - name: Zastosuj zmiany SSH przed dalszymi krokami
+      ansible.builtin.meta: flush_handlers
+
+    # --- Proxmox: użytkownik i token API --------------------------------------
+
+    - name: Sprawdź, czy użytkownik terraform@pve istnieje
+      ansible.builtin.command: pveum user list --output-format json
+      register: pve_users
+      changed_when: false
+
+    - name: Załóż użytkownika terraform@pve
+      ansible.builtin.command: >-
+        pveum user add terraform@pve --comment "Terraform automation"
+      when: "'terraform@pve' not in (pve_users.stdout | from_json | map(attribute='userid') | list)"
+      changed_when: true
+
+    - name: Nadaj uprawnienia administratora
+      ansible.builtin.command: >-
+        pveum acl modify / --users terraform@pve --roles Administrator
+      changed_when: false
+
+    - name: Sprawdź, czy token już istnieje
+      ansible.builtin.command: pveum user token list terraform@pve --output-format json
+      register: pve_tokens
+      changed_when: false
+      failed_when: false
+
+    # Wartość tokenu Proxmox pokazuje wyłącznie w chwili utworzenia - nie da się
+    # jej odczytać później. Stąd --privsep 0: token ma dziedziczyć uprawnienia
+    # użytkownika, inaczej dostaje pusty zbiór i każde wywołanie API kończy się 403.
+    - name: Utwórz token API
+      ansible.builtin.command: >-
+        pveum user token add terraform@pve tf --privsep 0 --output-format json
+      register: pve_token_new
+      when: "'tf' not in (pve_tokens.stdout | default('[]') | from_json | map(attribute='tokenid') | list)"
+      changed_when: true
+
+    - name: Pokaż token do przeniesienia do SOPS
+      ansible.builtin.debug:
+        msg: >-
+          PROXMOX_VE_API_TOKEN=terraform@pve!tf={{ (pve_token_new.stdout | from_json).value }}
+      when: pve_token_new.changed
+
+    - name: Token już istnieje
+      ansible.builtin.debug:
+        msg: >-
+          Token terraform@pve!tf już istnieje. Jego wartości nie da się odczytać ponownie -
+          jeśli jej nie masz, usuń token (pveum user token remove terraform@pve tf)
+          i uruchom playbook jeszcze raz.
+      when: not pve_token_new.changed
+
+  handlers:
+    - name: update initramfs
+      ansible.builtin.command: update-initramfs -u -k all
+      changed_when: true
+
+    - name: restart sshd
+      ansible.builtin.service:
+        name: ssh
+        state: restarted

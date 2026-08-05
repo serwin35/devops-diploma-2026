@@ -1,0 +1,15 @@
+# Zarządzane przez Ansible.
+# Host odpowiada na NDP w imieniu maszyn stojących w segmentach SDN.
+route-ttl 30000
+
+proxy {{ ipv6_uplink }} {
+    router yes
+    timeout 500
+    ttl 30000
+
+{% for prefix in ipv6_delegated_prefixes %}
+    rule {{ prefix }} {
+        static
+    }
+{% endfor %}
+}

@@ -1,0 +1,165 @@
+# Zarządzane przez Ansible.
+#
+# Jedyne źródło prawdy o konfiguracji tego Jenkinsa. JCasC czyta ten plik przy
+# każdym starcie i doprowadza instancję do opisanego tu stanu - zmiany kliknięte
+# w UI przepadają przy najbliższym restarcie. To jest cel, nie efekt uboczny:
+# instancję da się odtworzyć od zera bez ani jednego kliku.
+#
+# Wszystkie ${NAZWA} poniżej podstawia JCasC ze zmiennych środowiskowych
+# kontenera (compose.yml.j2). W tym pliku nie ma ani jednego sekretu.
+jenkins:
+  systemMessage: |
+    Ta instancja jest skonfigurowana w całości z kodu (Configuration as Code).
+    Źródło: ansible/roles/jenkins/templates/jenkins.yaml.j2 w repozytorium
+    infrastruktury. Zmiany wprowadzone w interfejsie zostaną nadpisane przy
+    najbliższym restarcie kontenera - poprawiaj plik, nie klikaj.
+
+  # Zero wykonawców na kontrolerze. Kontroler ma dostęp do gniazda Dockera
+  # i do własnej konfiguracji, więc kod z zadań nie ma prawa się tam wykonywać -
+  # od tego są efemeryczne agenty. EXCLUSIVE dodatkowo wymusza, że zadanie
+  # trafia tylko na węzeł o pasującej etykiecie.
+  numExecutors: 0
+  mode: EXCLUSIVE
+
+  # Port, na którym agenty meldują się kontrolerowi. Nie jest publikowany
+  # na hoście - agenty siedzą w tej samej sieci Dockera co kontroler.
+  slaveAgentPort: {{ jenkins_agent_port }}
+
+  securityRealm:
+    local:
+      # Rejestracja wyłączona: konta zakłada się przez zmianę tego pliku.
+      allowsSignup: false
+      users:
+        - id: "{{ jenkins_admin_user }}"
+          # Hasło przychodzi zmienną środowiskową z compose.yml (a ta z SOPS-a).
+          password: "${JENKINS_ADMIN_PASSWORD}"
+
+  # Zalogowany może wszystko, anonim nic. Jedynym kontem jest admin, więc
+  # efekt jest taki sam jak przy macierzy uprawnień, a nie wymaga wtyczki
+  # matrix-auth ani wypisywania kilkunastu reguł, które i tak dotyczą
+  # jednego użytkownika.
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+  # Agenty jako efemeryczne kontenery Dockera: każdy build dostaje czyste
+  # środowisko, a po robocie kontener znika. Nie ma dryfu "coś zostało
+  # po poprzednim buildzie".
+  clouds:
+    - docker:
+        name: docker
+        # Twardy limit równoległości na poziomie chmury. Nazwa pola to
+        # `containerCap` (liczba), NIE `containerCapStr` - wtyczka docker-plugin
+        # wystawia w JCasC wyłącznie ten wariant i literówka wywracała całą
+        # konfigurację ("Invalid configuration elements for type DockerCloud").
+        containerCap: {{ jenkins_agent_cap }}
+        dockerApi:
+          dockerHost:
+            # Gniazdo zamontowane z hosta - patrz komentarz w compose.yml.
+            uri: "unix:///var/run/docker.sock"
+        templates:
+          - labelString: "{{ jenkins_agent_label }}"
+            instanceCapStr: "{{ jenkins_agent_cap }}"
+            # Obraz agenta powstaje lokalnie na tej maszynie i nie ma go
+            # w żadnym rejestrze. Bez PULL_NEVER wtyczka przy każdym buildzie
+            # próbuje go pobrać z Docker Huba i kończy błędem "pull access
+            # denied", zanim w ogóle uruchomi kontener.
+            pullStrategy: PULL_NEVER
+            dockerTemplateBase:
+              image: "{{ jenkins_agent_image }}"
+              # Ta sama sieć co kontroler: agent łączy się po nazwie usługi,
+              # bez publikowania portu 50000 na hoście i bez reguły w UFW.
+              network: jenkins
+            remoteFs: "/home/jenkins/agent"
+            connector:
+              jnlp:
+                jenkinsUrl: "http://jenkins:8080/"
+            retentionStrategy:
+              idleMinutes: {{ jenkins_agent_idle_minutes }}
+
+# Poświadczenia zadania backupowego. Same identyfikatory i nazwy zmiennych
+# środowiskowych - wartości wchodzą do kontenera z SOPS-a przez compose.yml.
+# Dzięki temu zadanie odwołuje się do poświadczeń po ID (i Jenkins maskuje je
+# w konsoli builda), a w repozytorium nie ma ani jednego sekretu w jawnej postaci.
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - usernamePassword:
+              scope: GLOBAL
+              id: "{{ jenkins_cred_db }}"
+              username: "{{ jenkins_backup_db_user }}"
+              password: "${WOLFFIRE_DB_PASSWORD}"
+              description: "Konto aplikacji w bazie wolffire - używane do pg_dump"
+          # Klucz IAM z prawem zapisu do bucketa kopii, BEZ prawa kasowania
+          # (terraform/bootstrap/iam.tf). Para klucz/sekret pasuje do modelu
+          # login/hasło, więc nie potrzeba wtyczki aws-credentials.
+          - usernamePassword:
+              scope: GLOBAL
+              id: "{{ jenkins_cred_restic_s3 }}"
+              username: "${BACKUP_AWS_ACCESS_KEY_ID}"
+              password: "${BACKUP_AWS_SECRET_ACCESS_KEY}"
+              description: "Klucz IAM do bucketa {{ jenkins_backup_bucket }} (tylko zapis)"
+          # Hasło repozytorium restica. Bez niego kopia jest bezużyteczna -
+          # restic szyfruje dane kluczem wyprowadzonym właśnie z tego hasła.
+          - string:
+              scope: GLOBAL
+              id: "{{ jenkins_cred_restic_password }}"
+              secret: "${RESTIC_PASSWORD}"
+              description: "Hasło repozytorium restica (SOPS: restic_password)"
+
+security:
+  # Skrypt Job DSL poniżej pochodzi z tego repozytorium i jest wykonywany przez
+  # JCasC przy starcie, a nie przez użytkowników. Z włączoną kontrolą skryptów
+  # czekałby na ręczne zatwierdzenie w UI - czyli zadanie nie powstałoby,
+  # dopóki ktoś nie kliknie, a o to właśnie chodzi, żeby nie musiał.
+  globalJobDslSecurityConfiguration:
+    useScriptSecurity: false
+
+unclassified:
+  location:
+    # Bez tego Jenkins buduje odnośniki na podstawie adresu wewnętrznego
+    # i wysyła przeglądarkę na {{ private_ip }} - nieosiągalny spoza sieci.
+    url: "{{ jenkins_url }}"
+
+# Zadanie tworzone z kodu przez Job DSL (sekcja `jobs:` = wtyczka job-dsl).
+#
+# Sam pipeline leży obok, w backup-pipeline.groovy, i jest tu tylko wczytywany.
+# Powód rozdzielenia: pipeline wpisany wprost przechodzi przez cztery poziomy
+# cytowania (YAML, Groovy Job DSL, Groovy pipeline, shell) i każde wielolinijkowe
+# polecenie powłoki wymaga tam ręcznych ucieczek. Osobny plik czyta się jak
+# zwykły Jenkinsfile.
+#
+# Wariant `cpsScm` (pipeline pobierany z repozytorium git) odpada, dopóki kopia
+# ma działać także wtedy, gdy niedostępny jest hosting repozytorium.
+jobs:
+  - script: >
+      pipelineJob('{{ jenkins_backup_job_name }}') {
+        description('Nocna kopia zapasowa: pg_dump bazy wolffire i wysyłka do S3 przez restic. Zadanie pochodzi z JCasC - edytuj rolę jenkins, nie UI.')
+
+        logRotator {
+          numToKeep(30)
+        }
+
+        // Harmonogram na poziomie zadania, a nie w bloku `triggers` pipeline'u:
+        // wyzwalacz zadeklarowany wewnątrz pipeline'u zaczyna działać dopiero
+        // po pierwszym przebiegu, bo Jenkins musi najpierw wczytać jego kod.
+        // Tutaj obowiązuje od razu po starcie kontrolera.
+        triggers {
+          cron('{{ jenkins_backup_cron }}')
+        }
+
+        definition {
+          cps {
+            // Sandbox WŁĄCZONY, mimo że skrypt pochodzi z repozytorium.
+            // Bez niego wtyczka script-security zażąda ręcznego zatwierdzenia
+            // kodu w UI ("script not yet approved for use") i zadanie wywala
+            // się przy każdym uruchomieniu aż do kliknięcia - dokładnie ta
+            // rzecz, której ma tu nie być. Pipeline korzysta wyłącznie ze
+            // standardowych kroków (sh, withCredentials, deleteDir), więc
+            // sandbox go nie ogranicza.
+            sandbox(true)
+            script(new File('/var/jenkins_casc/backup-pipeline.groovy').text)
+          }
+        }
+      }

@@ -1,0 +1,11 @@
+# Niewrażliwa część konfiguracji aplikacji (odpowiednik .env z Ansible).
+# Sekrety mieszkają osobno w Secret - rozdział pozwala różnicować dostęp RBAC
+# i nie pokazywać haseł w `kubectl describe configmap`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "wolffire.fullname" . }}-env
+  labels:
+    {{- include "wolffire.labels" . | nindent 4 }}
+data:
+  {{- include "wolffire.configEnv" . | nindent 2 }}

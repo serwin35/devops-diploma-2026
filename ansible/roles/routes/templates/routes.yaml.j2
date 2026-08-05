@@ -1,0 +1,18 @@
+# Zarządzane przez Ansible.
+#
+# Maszyna z dwiema kartami dostaje DWIE trasy domyślne - jedną przez kartę
+# publiczną, drugą przez segment wewnętrzny. Jądro wybiera pierwszą, więc ruch
+# do pozostałych segmentów (10.0.0.0/16) uciekał do internetu zamiast przez
+# bramę segmentu. Trasa poniżej jest bardziej szczegółowa niż domyślna,
+# więc wygrywa dla adresów wewnętrznych.
+network:
+  version: 2
+  ethernets:
+{% for iface in extra_routes | map(attribute='interface') | unique %}
+    {{ iface }}:
+      routes:
+{% for r in extra_routes if r.interface == iface %}
+        - to: {{ r.to }}
+          via: {{ r.via }}
+{% endfor %}
+{% endfor %}

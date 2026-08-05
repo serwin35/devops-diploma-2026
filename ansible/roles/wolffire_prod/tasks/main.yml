@@ -1,0 +1,129 @@
+- name: Zainstaluj Helma
+  ansible.builtin.unarchive:
+    src: "https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    extra_opts: [--strip-components=1, linux-amd64/helm]
+    creates: /usr/local/bin/helm
+  tags: [wolffire_prod]
+
+# Chart kopiowany z repozytorium na serwer - pipeline CD robi potem tylko
+# `helm upgrade --set image.tag=<sha>`, więc nie musi znać żadnych sekretów
+# aplikacji: te siedzą w values na maszynie (0600).
+- name: Skopiuj chart
+  ansible.builtin.copy:
+    src: "{{ wolffire_chart_src }}/"
+    dest: "{{ wolffire_chart_dest }}/"
+    mode: preserve
+  register: wolffire_chart_copy
+  tags: [wolffire_prod]
+
+# CD wdraża konkretne tagi przez --set; Ansible nie może ich cofać do "latest"
+# przy każdym przebiegu. Jeśli release istnieje, przejmujemy wdrożony tag.
+- name: Odczytaj tag wdrożony przez CD
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    helm get values wolffire --kubeconfig /etc/rancher/k3s/k3s.yaml
+    -n {{ wolffire_namespace }} -o json 2>/dev/null
+    | python3 -c "import json,sys; v=json.load(sys.stdin) or {}; print(v.get('image',{}).get('php',{}).get('tag','') or '')"
+  args:
+    executable: /bin/bash
+  register: deployed_tag
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: [wolffire_prod]
+
+- name: Użyj wdrożonego tagu zamiast domyślnego
+  ansible.builtin.set_fact:
+    wolffire_image_tag: "{{ deployed_tag.stdout | trim }}"
+  when: (deployed_tag.stdout | default('') | trim) != ''
+  tags: [wolffire_prod]
+
+- name: Wygeneruj values produkcyjne
+  ansible.builtin.template:
+    src: values-prod.yaml.j2
+    dest: "{{ wolffire_values_dest }}"
+    mode: "0600"
+  no_log: true
+  register: wolffire_values_file
+  tags: [wolffire_prod]
+
+# Stan release'u czytamy osobno, bo `helm upgrade` sam z siebie nie daje sygnału
+# "nie było nic do zrobienia" - patrz komentarz przy zadaniu poniżej.
+#
+# Świadomie `helm list`, a NIE `helm status`: to drugie zwraca w JSON-ie także
+# sekcję `config`, czyli wartości użyte przy wdrożeniu - a tam siedzą hasło do
+# bazy, hasło Redisa, klucz aplikacji i token do rejestru. Zarejestrowane
+# wylądowałyby w logu Ansible. `helm list` zwraca wyłącznie metadane release'u.
+- name: Sprawdź stan release'u
+  ansible.builtin.command: >-
+    helm list --kubeconfig /etc/rancher/k3s/k3s.yaml
+    -n {{ wolffire_namespace }} --filter '^wolffire$' --output json
+  register: helm_status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: [wolffire_prod]
+
+# `helm upgrade` zawsze zakłada nową rewizję i zawsze kończy wydrukiem
+# "STATUS: deployed", więc changed_when czytane z jego wyjścia raportowało zmianę
+# przy KAŻDYM przebiegu - playbook nigdy nie osiągał stanu ustalonego.
+#
+# Zamiast zgadywać z tekstu patrzymy na wejścia wdrożenia: chart, plik values
+# i stan samego release'u. Efekt uboczny jest pożądany: przebieg Ansible nie
+# nadpisuje już tagu obrazu wdrożonego przez CD (`helm upgrade --set image.tag`),
+# bo values na dysku się nie zmieniły.
+- name: Wdróż aplikację
+  ansible.builtin.command: >-
+    helm upgrade --install wolffire {{ wolffire_chart_dest }}
+    --kubeconfig /etc/rancher/k3s/k3s.yaml
+    -n {{ wolffire_namespace }} --create-namespace
+    -f {{ wolffire_values_dest }}
+    --wait --timeout 10m
+  when: >-
+    wolffire_chart_copy.changed
+    or wolffire_values_file.changed
+    or helm_status.rc != 0
+    or (helm_status.stdout | default('[]') | from_json
+        | selectattr('status', 'equalto', 'deployed') | list | length) == 0
+  changed_when: true
+  tags: [wolffire_prod]
+
+# Bez pipefail ta bramka była ślepa: gdy `k3s kubectl` nie odpowiadał (klaster
+# nieosiągalny, brak kubeconfigu), potok i tak kończył się kodem 0, `wc -l`
+# drukowało "0" i zadanie meldowało "wszystkie pody działają" przy LEŻĄCYM
+# klastrze. Pusty wynik traktujemy jako błąd - brak podów to nie jest stan zdrowy.
+- name: Sprawdź, czy pody działają
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      pods=$(k3s kubectl get pods -n {{ wolffire_namespace }} --no-headers) || exit 1
+      test -n "$pods" || exit 1
+      printf '%s\n' "$pods" | awk '$3 != "Running" && $3 != "Completed"' | wc -l
+    executable: /bin/bash
+  register: bad_pods
+  retries: 10
+  delay: 15
+  until: bad_pods.rc == 0 and (bad_pods.stdout | trim) == "0"
+  changed_when: false
+  # Weryfikacja jest odczytem, więc idzie także w --check. Inaczej zadanie
+  # zostaje pominięte, rejestr jest pusty i until/failed_when wywala przebieg.
+  check_mode: false
+  tags: [wolffire_prod]
+
+- name: Sprawdź odpowiedź aplikacji przez Traefik
+  ansible.builtin.uri:
+    url: "http://{{ private_ip }}/up"
+    headers:
+      Host: "{{ public_zone }}"
+    status_code: [200]
+  retries: 12
+  delay: 5
+  register: prod_up
+  until: prod_up.status == 200
+  changed_when: false
+  # Weryfikacja jest odczytem, więc idzie także w --check. Inaczej zadanie
+  # zostaje pominięte, rejestr jest pusty i until/failed_when wywala przebieg.
+  check_mode: false
+  tags: [wolffire_prod]

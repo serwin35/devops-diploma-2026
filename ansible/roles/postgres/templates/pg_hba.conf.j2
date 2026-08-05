@@ -1,0 +1,27 @@
+# Zarządzane przez Ansible. Zmiany na maszynie znikną przy następnym
+# uruchomieniu playbooka.
+#
+# Plik celowo NIE zawiera domyślnych wpisów z pakietu - lista jest kompletna
+# i każdy wiersz ma uzasadnienie. Brak wpisu to też decyzja: nie ma tu ani
+# replikacji, ani dostępu "host all all", ani metody trust.
+#
+# TYPE  DATABASE        USER                    ADDRESS                 METHOD
+
+# Administracja gniazdem lokalnym. peer wiąże rolę bazy z kontem systemowym,
+# więc superuser nie potrzebuje hasła, które trzeba by gdzieś przechowywać.
+# Tą ścieżką łączy się również Ansible (become_user: postgres).
+local   all             postgres                                        peer
+
+# Eksporter metryk. Również peer i również gniazdo lokalne - dzięki temu na
+# dysku maszyny nie leżą żadne poświadczenia do bazy, a ruch z metrykami nie
+# przechodzi przez stos sieciowy.
+local   all             {{ postgres_exporter_system_user }}                      peer
+
+# Aplikacja na k3s.
+# scram-sha-256, a nie md5: hash md5 przechwycony z sieci wystarcza do
+# zalogowania się (jest ekwiwalentem hasła), scram nie ma tej właściwości.
+# Zakres zawężony do jednej bazy i jednej roli - kompromitacja poda w klastrze
+# nie daje dostępu do pozostałych baz na tym serwerze.
+host    {{ postgres_db_name }}        {{ postgres_db_user }}                        {{ k3s_subnet }}          scram-sha-256
+# pg_dump w jobie backupowym Jenkinsa łączy się z maszyny CI/CD.
+host    {{ postgres_db_name }}        {{ postgres_db_user }}                        {{ cicd_ip }}/32          scram-sha-256

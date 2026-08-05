@@ -1,0 +1,16 @@
+# Zarządzane przez Ansible.
+# Dashboardy wczytywane z katalogu przy starcie - odtworzenie Grafany od zera
+# nie wymaga żadnego ręcznego importu.
+apiVersion: 1
+
+providers:
+  - name: wolffire
+    orgId: 1
+    folder: WolfFire
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards-json
+      foldersFromFilesStructure: false

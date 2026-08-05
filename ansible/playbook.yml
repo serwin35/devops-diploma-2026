@@ -1,0 +1,71 @@
+# Konfiguracja wszystkiego, co działa wewnątrz maszyn. Infrastrukturę (same maszyny,
+# sieć, firewall hypervisora) tworzy wcześniej Terraform.
+#
+#   make configure        # całość
+#   cd ansible && ansible-playbook playbook.yml --limit monitoring-1
+#   cd ansible && ansible-playbook playbook.yml --tags docker
+
+- hosts: all
+  roles:
+    - hostname
+    - login
+    - security
+    - observability
+    # Agent logów na każdej maszynie - journald wszędzie, kontenery tam,
+    # gdzie stoi Docker.
+    - alloy
+
+# Host routuje publiczne IPv6 do segmentów SDN - dzięki temu bastion ma adres
+# globalny bez dokupowania adresu IPv4 i bez wirtualnego MAC-a.
+- hosts: proxmox
+  roles:
+    - ipv6_router
+
+- hosts: bastion
+  roles:
+    - routes
+
+# cloudflared stoi na maszynie z usługą i celuje w localhost. Dzięki temu ruch
+# nie przechodzi między segmentami, firewall nie potrzebuje reguł dla portów
+# paneli, a awaria jednej maszyny nie odcina paneli na pozostałych.
+- hosts: cicd:observability:proxmox:dev
+  roles:
+    - cloudflared
+
+- hosts: docker
+  roles:
+    - docker
+
+- hosts: k3s_server
+  roles:
+    - k3s
+
+- hosts: k3s_agent
+  roles:
+    - k3s
+
+# Aplikacja produkcyjna: chart Helma na klaster, tunel na domenie apex.
+- hosts: k3s_server
+  roles:
+    - wolffire_prod
+    - cloudflared
+
+- hosts: postgres
+  roles:
+    - postgres
+
+- hosts: redis
+  roles:
+    - redis
+
+- hosts: cicd
+  roles:
+    - jenkins
+
+- hosts: observability
+  roles:
+    - monitoring
+
+- hosts: dev
+  roles:
+    - wolffire

@@ -1,0 +1,25 @@
+- name: Zbierz konta imienne z katalogu kluczy
+  ansible.builtin.set_fact:
+    human_users: >-
+      {{
+        query('fileglob', human_keys_glob)
+        | map('basename') | map('splitext') | map('first')
+        | list
+      }}
+
+- name: Załóż konta imienne
+  ansible.builtin.user:
+    name: "{{ item }}"
+    shell: /bin/bash
+    # Logowanie wyłącznie kluczem - hasło zablokowane, nie puste.
+    password: "!"
+    create_home: true
+  loop: "{{ human_users }}"
+
+- name: Rozłóż klucze publiczne
+  ansible.posix.authorized_key:
+    user: "{{ item }}"
+    key: "{{ lookup('file', '../keys/humans/' ~ item ~ '.pub') }}"
+    state: present
+    exclusive: true
+  loop: "{{ human_users }}"

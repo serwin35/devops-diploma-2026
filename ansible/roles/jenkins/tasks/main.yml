@@ -1,0 +1,192 @@
+# Jenkins jako kontroler CI/CD na maszynie cicd-1.
+#
+# Cała konfiguracja - użytkownik, uprawnienia, poświadczenia, chmura agentów,
+# zadania - pochodzi z pliku jenkins.yaml (Configuration as Code). Instalacja
+# sprowadza się do zbudowania dwóch obrazów (kontroler z wtyczkami, agent
+# z narzędziami backupu) i uruchomienia kontenera; w UI nie ma nic do ustawienia.
+
+- name: Otwórz port interfejsu Jenkinsa
+  ansible.builtin.include_role:
+    name: security
+    tasks_from: open_ports
+  vars:
+    ports:
+      - { port: "{{ jenkins_port }}", from: "{{ bastion_ip }}", comment: "Jenkins UI przez tunel" }
+  tags: [jenkins]
+
+# Klucze do S3 przychodzą ze środowiska (sops exec-env secrets.sops.yaml ...),
+# bo tam trzyma je reszta projektu - z tego samego pliku korzysta Terraform.
+# Pusta wartość oznacza uruchomienie playbooka z pominięciem sops i skończyłaby
+# się Jenkinsem z pustym poświadczeniem, czyli kopią walącą się dopiero w nocy.
+- name: Sprawdź, czy klucze do bucketa kopii są dostępne
+  ansible.builtin.assert:
+    that:
+      - jenkins_backup_aws_access_key_id | length > 0
+      - jenkins_backup_aws_secret_access_key | length > 0
+    fail_msg: >-
+      Brak BACKUP_AWS_ACCESS_KEY_ID / BACKUP_AWS_SECRET_ACCESS_KEY w środowisku.
+      Uruchom playbook przez:
+      sops exec-env secrets.sops.yaml 'cd ansible && ansible-playbook playbook.yml ...'
+  tags: [jenkins]
+
+# Kontener działa jako użytkownik `jenkins`, a gniazdo Dockera należy do grupy
+# `docker` hosta. GID tej grupy różni się między maszynami, więc odczytujemy go,
+# zamiast wpisywać na sztywno.
+- name: Odczytaj grupę docker
+  ansible.builtin.getent:
+    database: group
+    key: docker
+  tags: [jenkins]
+
+- name: Zapamiętaj identyfikator grupy docker
+  ansible.builtin.set_fact:
+    docker_gid: "{{ ansible_facts.getent_group.docker[1] }}"
+  tags: [jenkins]
+
+- name: Utwórz katalogi Jenkinsa
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0750"
+  loop:
+    - "{{ jenkins_dir }}"
+    # Kontekst budowania obrazu agenta osobno: buildkit wysyła do demona cały
+    # katalog kontekstu, a w {{ jenkins_dir }} leży compose.yml z sekretami.
+    - "{{ jenkins_dir }}/agent"
+  tags: [jenkins]
+
+- name: Wygeneruj listę wtyczek
+  ansible.builtin.template:
+    src: plugins.txt.j2
+    dest: "{{ jenkins_dir }}/plugins.txt"
+    mode: "0644"
+  tags: [jenkins]
+
+- name: Wygeneruj Dockerfile kontrolera
+  ansible.builtin.template:
+    src: Dockerfile.j2
+    dest: "{{ jenkins_dir }}/Dockerfile"
+    mode: "0644"
+  tags: [jenkins]
+
+- name: Wygeneruj Dockerfile agenta
+  ansible.builtin.template:
+    src: agent-Dockerfile.j2
+    dest: "{{ jenkins_dir }}/agent/Dockerfile"
+    mode: "0644"
+  tags: [jenkins]
+
+# Tag obrazu = skrót z treści wszystkiego, co wpływa na jego zawartość.
+#
+# Dlaczego nie stały tag `:local`: przy składzie obrazów containerd (Docker 29)
+# nadpisanie tagu usuwa poprzedni obraz natychmiast, razem z warstwami. Kontener
+# działający na starym obrazie zostaje wtedy z odwołaniem do nieistniejącego ID,
+# a `docker compose images` - wołane przez moduł docker_compose_v2 przy każdym
+# uruchomieniu - kończy się błędem "No such image". W playbooku widać to jako
+# "Error while parsing JSON output of ... compose images --format json", bo moduł
+# próbuje sparsować komunikat błędu jako JSON. To była przyczyna nieudanego
+# pierwszego wdrożenia.
+#
+# Przy tagu liczonym z treści nowy obraz dostaje nową nazwę, stary zostaje
+# nietknięty do czasu przełączenia kontenera, a zmiana Dockerfile albo listy
+# wtyczek sama z siebie wymusza przebudowę i podmianę kontenera przez Compose.
+- name: Wylicz tagi obrazów
+  ansible.builtin.set_fact:
+    jenkins_image: >-
+      {{ jenkins_image_repo }}:{{ (lookup('template', 'Dockerfile.j2')
+                                   ~ lookup('template', 'plugins.txt.j2'))
+                                  | hash('sha1') | truncate(12, true, '') }}
+    jenkins_agent_image: >-
+      {{ jenkins_agent_image_repo }}:{{ lookup('template', 'agent-Dockerfile.j2')
+                                        | hash('sha1') | truncate(12, true, '') }}
+  tags: [jenkins]
+
+# rebuild: never - obraz o danym tagu jest z definicji zawsze taki sam, więc
+# powtórne budowanie niczego by nie zmieniło, a kosztuje kilka minut przy każdym
+# przebiegu playbooka.
+- name: Zbuduj obraz kontrolera
+  community.docker.docker_image_build:
+    name: "{{ jenkins_image }}"
+    path: "{{ jenkins_dir }}"
+    rebuild: never
+  tags: [jenkins]
+
+- name: Zbuduj obraz agenta
+  community.docker.docker_image_build:
+    name: "{{ jenkins_agent_image }}"
+    path: "{{ jenkins_dir }}/agent"
+    rebuild: never
+  tags: [jenkins]
+
+- name: Wygeneruj kod zadania backupowego
+  ansible.builtin.template:
+    src: backup-pipeline.groovy.j2
+    dest: "{{ jenkins_dir }}/backup-pipeline.groovy"
+    mode: "0644"
+  notify: restart jenkins
+  tags: [jenkins]
+
+# 0644, nie 0600: plik czyta proces w kontenerze działający jako uid 1000.
+# Sekretów tu nie ma - hasło administratora i poświadczenia zadania wchodzą
+# zmiennymi środowiskowymi z compose.yml, tu zostają same placeholdery ${...}.
+- name: Wygeneruj konfigurację JCasC
+  ansible.builtin.template:
+    src: jenkins.yaml.j2
+    dest: "{{ jenkins_dir }}/jenkins.yaml"
+    mode: "0644"
+  notify: restart jenkins
+  tags: [jenkins]
+
+- name: Wygeneruj compose
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ jenkins_dir }}/compose.yml"
+    # Zawiera hasło administratora i poświadczenia zadania backupowego.
+    mode: "0600"
+  no_log: true
+  notify: restart jenkins
+  tags: [jenkins]
+
+# Bez `build:` - obrazy są już zbudowane wyżej. Compose odpowiada wyłącznie
+# za uruchomienie kontenera z gotowego tagu.
+- name: Uruchom Jenkinsa
+  community.docker.docker_compose_v2:
+    project_src: "{{ jenkins_dir }}"
+    state: present
+  tags: [jenkins]
+
+# Weryfikacja ma sprawdzić konfigurację, którą właśnie wgraliśmy, a nie tę
+# sprzed zmiany - handlery muszą pójść przed sprawdzeniem.
+- name: Wykonaj odłożone restarty
+  ansible.builtin.meta: flush_handlers
+  tags: [jenkins]
+
+# 403 jest tu poprawną odpowiedzią: znaczy, że Jenkins wstał i egzekwuje
+# uwierzytelnienie. Liczy się odpowiedź aplikacji, nie jej treść. Pierwszy start
+# po przebudowie obrazu potrafi trwać ponad minutę (rozpakowanie wtyczek),
+# stąd długie okno prób.
+- name: Poczekaj na Jenkinsa
+  ansible.builtin.uri:
+    url: "http://{{ private_ip }}:{{ jenkins_port }}/login"
+    status_code: [200, 403]
+  register: jenkins_login
+  retries: 30
+  delay: 10
+  until: jenkins_login.status in [200, 403]
+  changed_when: false
+  tags: [jenkins]
+
+# Jenkins odpowiada na /login także wtedy, gdy JCasC wywrócił się na błędzie
+# w konfiguracji albo wtyczka nie wstała - tyle że bez zadania, bez poświadczeń
+# i bez chmury agentów. Bez tego sprawdzenia playbook kończyłby się zielono przy
+# instancji, która nie robi tego, co opisuje ten katalog. Log kontenera jest
+# jedynym źródłem tej informacji, które nie wymaga logowania się do API.
+- name: Sprawdź, czy JCasC i wtyczki wstały bez błędów
+  ansible.builtin.command:
+    cmd: docker logs --since 15m jenkins
+  register: jenkins_boot_log
+  changed_when: false
+  failed_when: >-
+    'Failed Loading plugin' in jenkins_boot_log.stderr
+    or 'ConfigurationAsCode.init' in jenkins_boot_log.stderr
+  tags: [jenkins]

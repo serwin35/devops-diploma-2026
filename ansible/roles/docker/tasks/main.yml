@@ -1,0 +1,116 @@
+- name: Zainstaluj zależności repozytorium
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  tags: [docker]
+
+- name: Utwórz katalog na klucze APT
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+  tags: [docker]
+
+- name: Pobierz klucz GPG Dockera
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+  tags: [docker]
+
+- name: Dodaj repozytorium Dockera
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: [deb]
+    uris: "https://download.docker.com/linux/{{ ansible_distribution | lower }}"
+    suites: ["{{ ansible_distribution_release }}"]
+    components: [stable]
+    architectures: ["{{ 'amd64' if ansible_architecture == 'x86_64' else ansible_architecture }}"]
+    signed_by: /etc/apt/keyrings/docker.asc
+    enabled: true
+    state: present
+  tags: [docker]
+
+- name: Zainstaluj Docker Engine wraz z wtyczką compose
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+  tags: [docker]
+
+- name: Skonfiguruj demona
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    mode: "0644"
+    content: |
+      {
+        "data-root": "{{ docker_data_root }}",
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "{{ docker_log_max_size }}",
+          "max-file": "{{ docker_log_max_file }}"
+        },
+        "live-restore": true,
+        "metrics-addr": "{{ private_ip }}:{{ docker_metrics_port }}"
+      }
+  notify: restart docker
+  tags: [docker]
+
+- name: Włącz Dockera
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+  tags: [docker]
+
+- name: Dopisz konta do grupy docker
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: docker
+    append: true
+  loop: "{{ docker_users }}"
+  tags: [docker]
+
+# cAdvisor zbiera metryki kontenerów, więc należy do tej roli, a nie do
+# observability - tamta leci na wszystkich maszynach, także tych bez Dockera,
+# i próbowała uruchomić kontener zanim demon w ogóle istniał.
+- name: Uruchom cAdvisor
+  community.docker.docker_container:
+    name: cadvisor
+    image: "{{ cadvisor_image }}"
+    state: started
+    restart_policy: unless-stopped
+    published_ports:
+      - "{{ private_ip }}:{{ cadvisor_port }}:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg
+    privileged: true
+  tags: [docker]
+
+- name: Otwórz porty metryk kontenerów
+  ansible.builtin.include_role:
+    name: security
+    tasks_from: open_ports
+  vars:
+    ports:
+      - { port: "{{ cadvisor_port }}", from: "{{ monitoring_ip }}", comment: "cAdvisor" }
+      - { port: "{{ cadvisor_port }}", from: "{{ docker_bridge_cidr }}", comment: "cAdvisor z kontenera" }
+      - { port: "{{ docker_metrics_port }}", from: "{{ monitoring_ip }}", comment: "metryki demona Dockera" }
+      - { port: "{{ docker_metrics_port }}", from: "{{ docker_bridge_cidr }}", comment: "metryki demona z kontenera" }
+  tags: [docker]

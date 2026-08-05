@@ -1,0 +1,246 @@
+{
+  "title": "WolfFire - logi aplikacji",
+  "uid": "wolffire-app-logs",
+  "tags": ["wolffire", "logi", "aplikacja"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "host",
+        "label": "Maszyna",
+        "description": "Maszyna, na której stoją kontenery aplikacji. Pole tekstowe, a nie lista z Loki - dashboard ma się otwierać poprawnie także wtedy, gdy z danej maszyny nie przyszedł jeszcze ani jeden wpis.",
+        "type": "textbox",
+        "query": "wolffire-dev-app-1",
+        "current": { "text": "wolffire-dev-app-1", "value": "wolffire-dev-app-1" }
+      },
+      {
+        "name": "kontener",
+        "label": "Kontener",
+        "description": "Lista stała, nie zapytanie do Loki - nazwy kontenerów aplikacji są elementem wdrożenia, a nie czymś, co odkrywamy z logów.",
+        "type": "custom",
+        "query": "wolffire-php,wolffire-horizon,wolffire-scheduler,wolffire-nginx,wolffire-postgres,wolffire-redis",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" },
+        "options": []
+      },
+      {
+        "name": "poziom",
+        "label": "Poziom",
+        "description": "Filtr wyrażeniem regularnym na treści wpisu. PHP-FPM i Laravel nie mają w Loki etykiety poziomu - poziom jest częścią linii, więc filtrujemy patternem.",
+        "type": "custom",
+        "query": "wszystko : .,błędy : (?i)(error|critical|emergency|alert|exception|fatal),ostrzeżenia : (?i)(warning|warn|notice|deprecated)",
+        "current": { "text": "wszystko", "value": "." },
+        "options": []
+      },
+      {
+        "name": "szukaj",
+        "label": "Szukaj w treści",
+        "type": "textbox",
+        "query": "",
+        "current": { "text": "", "value": "" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Wpisy z aplikacji (zakres)",
+      "description": "Wszystkie linie ze wskazanych kontenerów w wybranym zakresie czasu.",
+      "datasource": "Loki",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{
+        "expr": "sum(count_over_time({job=\"docker\", host=\"$host\", container=~\"$kontener\"} [$__range]))",
+        "instant": true,
+        "refId": "A"
+      }]
+    },
+    {
+      "type": "stat",
+      "title": "Błędy PHP / Laravel (zakres)",
+      "description": "Linie z PHP-FPM, Horizona i schedulera zawierające ERROR, CRITICAL, EMERGENCY, ALERT, Exception lub Fatal.",
+      "datasource": "Loki",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [{
+        "expr": "sum(count_over_time({job=\"docker\", host=\"$host\", container=~\"wolffire-(php|horizon|scheduler)\"} |~ `(?i)(error|critical|emergency|alert|exception|fatal)` [$__range]))",
+        "instant": true,
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Odpowiedzi 5xx (zakres)",
+      "description": "Błędy serwera w logu dostępowym nginksa. Każde 5xx to żądanie, którego użytkownik nie dostał.",
+      "datasource": "Loki",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [{
+        "expr": "sum(count_over_time({job=\"docker\", host=\"$host\", container=\"wolffire-nginx\"} | pattern `<_> - <_> [<_>] \"<_>\" <status> <_>` | status=~`5..` [$__range]))",
+        "instant": true,
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Odpowiedzi 4xx (zakres)",
+      "description": "Błędy po stronie klienta: 404, 403, 419 (wygasły token CSRF). Pojedyncze sztuki są normalne, seria oznacza zwykle skanera albo zepsuty odnośnik.",
+      "datasource": "Loki",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [{
+        "expr": "sum(count_over_time({job=\"docker\", host=\"$host\", container=\"wolffire-nginx\"} | pattern `<_> - <_> [<_>] \"<_>\" <status> <_>` | status=~`4..` [$__range]))",
+        "instant": true,
+        "refId": "A"
+      }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Natężenie logów wg kontenera",
+      "description": "Linie na sekundę. Kontener, który nagle milknie, jest równie podejrzany jak ten, który nagle zaczyna krzyczeć.",
+      "datasource": "Loki",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 4 },
+      "targets": [{
+        "expr": "sum by (container) (rate({job=\"docker\", host=\"$host\", container=~\"$kontener\"} |~ \"$szukaj\" [1m]))",
+        "legendFormat": "{{ '{{container}}' }}",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "logs/s" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "nginx - natężenie odpowiedzi wg klasy statusu",
+      "description": "Status wyciągany parserem pattern z logu w formacie combined. Zdrowy wykres to dominujące 2xx, płaskie 4xx i zero 5xx.",
+      "datasource": "Loki",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 11 },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({job=\"docker\", host=\"$host\", container=\"wolffire-nginx\"} | pattern `<_> - <_> [<_>] \"<_>\" <status> <_>` | status=~`2..` [1m]))",
+          "legendFormat": "2xx",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(count_over_time({job=\"docker\", host=\"$host\", container=\"wolffire-nginx\"} | pattern `<_> - <_> [<_>] \"<_>\" <status> <_>` | status=~`3..` [1m]))",
+          "legendFormat": "3xx",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(count_over_time({job=\"docker\", host=\"$host\", container=\"wolffire-nginx\"} | pattern `<_> - <_> [<_>] \"<_>\" <status> <_>` | status=~`4..` [1m]))",
+          "legendFormat": "4xx",
+          "refId": "C"
+        },
+        {
+          "expr": "sum(count_over_time({job=\"docker\", host=\"$host\", container=\"wolffire-nginx\"} | pattern `<_> - <_> [<_>] \"<_>\" <status> <_>` | status=~`5..` [1m]))",
+          "legendFormat": "5xx",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "2xx" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byName", "options": "3xx" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] },
+          { "matcher": { "id": "byName", "options": "4xx" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] },
+          { "matcher": { "id": "byName", "options": "5xx" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "PHP / Laravel - błędy i ostrzeżenia",
+      "description": "Dwie osobne serie, bo to dwie różne decyzje: błąd wymaga reakcji teraz, ostrzeżenie trafia na listę zadań.",
+      "datasource": "Loki",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 11 },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({job=\"docker\", host=\"$host\", container=~\"wolffire-(php|horizon|scheduler)\"} |~ `(?i)(error|critical|emergency|alert|exception|fatal)` [1m]))",
+          "legendFormat": "błędy",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(count_over_time({job=\"docker\", host=\"$host\", container=~\"wolffire-(php|horizon|scheduler)\"} |~ `(?i)(warning|warn|notice|deprecated)` [1m]))",
+          "legendFormat": "ostrzeżenia",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "fillOpacity": 15 } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "błędy" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] },
+          { "matcher": { "id": "byName", "options": "ostrzeżenia" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] }
+        ]
+      }
+    },
+    {
+      "type": "logs",
+      "title": "PHP-FPM i Laravel",
+      "description": "Kontenery wolffire-php i wolffire-scheduler. Filtr poziomu i wyszukiwarka u góry dashboardu.",
+      "datasource": "Loki",
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 19 },
+      "options": { "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true, "enableLogDetails": true, "prettifyLogMessage": false },
+      "targets": [{
+        "expr": "{job=\"docker\", host=\"$host\", container=~\"wolffire-(php|scheduler)\"} |~ \"$poziom\" |~ \"$szukaj\"",
+        "refId": "A"
+      }]
+    },
+    {
+      "type": "logs",
+      "title": "Horizon - kolejki",
+      "description": "Worker kolejek Laravela. Tu widać zadania, które poleciały wyjątkiem, oraz restarty puli workerów.",
+      "datasource": "Loki",
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 30 },
+      "options": { "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true, "enableLogDetails": true },
+      "targets": [{
+        "expr": "{job=\"docker\", host=\"$host\", container=\"wolffire-horizon\"} |~ \"$poziom\" |~ \"$szukaj\"",
+        "refId": "A"
+      }]
+    },
+    {
+      "type": "logs",
+      "title": "nginx - żądania zakończone błędem (4xx i 5xx)",
+      "description": "Log dostępowy przefiltrowany do samych błędów - pełny access log przy normalnym ruchu i tak jest nieczytelny.",
+      "datasource": "Loki",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 30 },
+      "options": { "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true, "enableLogDetails": true },
+      "targets": [{
+        "expr": "{job=\"docker\", host=\"$host\", container=\"wolffire-nginx\"} | pattern `<_> - <_> [<_>] \"<_>\" <status> <_>` | status=~`[45]..` |~ \"$szukaj\"",
+        "refId": "A"
+      }]
+    },
+    {
+      "type": "logs",
+      "title": "nginx - pełny log dostępowy",
+      "description": "Wszystkie żądania. Przydatne przy odtwarzaniu przebiegu konkretnej sesji.",
+      "datasource": "Loki",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 40 },
+      "options": { "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true, "enableLogDetails": true },
+      "targets": [{
+        "expr": "{job=\"docker\", host=\"$host\", container=\"wolffire-nginx\"} |~ \"$szukaj\"",
+        "refId": "A"
+      }]
+    }
+  ]
+}

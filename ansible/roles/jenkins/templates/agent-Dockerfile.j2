@@ -1,0 +1,52 @@
+# Zarządzane przez Ansible.
+#
+# Obraz agenta buildów. Powstaje z oficjalnego jenkins/inbound-agent, bo cały
+# mechanizm podłączania się do kontrolera (JNLP, ponowne łączenie, workdir)
+# jest już w nim rozwiązany - dokładamy wyłącznie narzędzia, których wymaga
+# zadanie backupowe. Odwrotna kolejność (własny obraz z Debiana + ręczne
+# wstawienie agent.jar) oznacza utrzymywanie tego mechanizmu samemu.
+#
+# Dlaczego własny obraz, a nie instalacja pakietów w kroku pipeline'u:
+#  - agent jest efemeryczny, więc apt-get chodziłby przy KAŻDYM buildzie,
+#    wydłużając go o minuty i uzależniając kopię zapasową od dostępności
+#    repozytoriów Debiana o 2 w nocy,
+#  - wersje narzędzi byłyby wtedy tym, co akurat leży w repo danego dnia,
+#    a nie tym, co przetestowano przy próbnym odtworzeniu kopii.
+FROM {{ jenkins_agent_base_image }}
+
+USER root
+
+# Wszystko w jednej warstwie: każdy osobny RUN z apt-get zostawia w obrazie
+# własną kopię list pakietów.
+#
+# Postgres z PGDG, nie z Debiana: dystrybucja wozi inną gałąź, a pg_dump
+# starszy od serwera odmawia zrzutu bazy ("server version mismatch").
+#
+# Restic z wydania upstream, nie z apt: w dystrybucji jest starszy, a wersja
+# narzędzia do odtwarzania kopii ma być dokładnie tą, którą przetestowano.
+#
+# Wywołania --version na końcu są celowe: brak narzędzia wywala budowanie
+# obrazu, zamiast wyjść dopiero o 2 w nocy w połowie kopii zapasowej.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl gnupg bzip2; \
+    install -d /usr/share/postgresql-common/pgdg; \
+    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+      -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc; \
+    . /etc/os-release; \
+    echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+      > /etc/apt/sources.list.d/pgdg.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends postgresql-client-{{ jenkins_agent_pg_version }}; \
+    curl -fsSL -o /tmp/restic.bz2 \
+      "https://github.com/restic/restic/releases/download/v{{ jenkins_agent_restic_version }}/restic_{{ jenkins_agent_restic_version }}_linux_amd64.bz2"; \
+    bunzip2 -c /tmp/restic.bz2 > /usr/local/bin/restic; \
+    chmod 0755 /usr/local/bin/restic; \
+    rm -f /tmp/restic.bz2; \
+    rm -rf /var/lib/apt/lists/*; \
+    pg_dump --version; \
+    restic version
+
+# Powrót na konto nieuprzywilejowane: build nie ma powodu chodzić jako root,
+# a obraz bazowy uruchamia agenta właśnie jako `jenkins`.
+USER jenkins

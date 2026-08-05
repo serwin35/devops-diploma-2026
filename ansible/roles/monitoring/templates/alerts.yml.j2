@@ -1,0 +1,252 @@
+# Zarządzane przez Ansible.
+#
+# Reguł jest celowo mało. Alert, który odzywa się codziennie, przestaje być
+# czytany - a wtedy nie zadziała wtedy, gdy naprawdę będzie potrzebny.
+#
+# Klauzula `for` wymaga, żeby warunek był spełniony NIEPRZERWANIE przez podany
+# czas. Przy scrape_interval 15s wartość 10m oznacza 40 kolejnych sprawdzeń -
+# chwilowy skok nie wywoła powiadomienia.
+groups:
+  - name: dostepnosc
+    rules:
+      - alert: MaszynaNieodpowiada
+        expr: up{job="node"} == 0
+        # Krótko, bo niedostępna maszyna to zawsze problem - restart trwa
+        # zwykle poniżej 3 minut, więc planowe restarty i tak się nie złapią.
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ '{{ $labels.instance }}' }} nie odpowiada"
+          description: "Prometheus nie zbiera metryk z tej maszyny od 3 minut."
+
+      - alert: EksporterNieodpowiada
+        # MaszynaNieodpowiada pokrywa wyłącznie job="node". cAdvisor, demon
+        # Dockera i eksporter Redisa mogą zamilknąć bez żadnego sygnału - i tak
+        # się stało: cadvisor oraz docker na dwóch maszynach były DOWN
+        # kilkanaście minut, a jedynym śladem był ręcznie odpalony test dymny.
+        #
+        # Postgres (BazaNieodpowiada) i wolffire (AplikacjaNieodpowiada) mają
+        # własne reguły krytyczne, więc tutaj ich świadomie nie ma - inaczej
+        # jedna awaria wysyłałaby dwa powiadomienia.
+        expr: up{job=~"cadvisor|docker|redis"} == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Eksporter {{ '{{ $labels.job }}' }} na {{ '{{ $labels.instance }}' }} nie odpowiada"
+          description: "Metryki z tego źródła nie są zbierane od 10 minut - panele pokazują dane sprzed awarii."
+
+      - alert: KontenerRestartujeSie
+        # changes(), nie increase(): container_start_time_seconds to znacznik
+        # czasu startu, a nie licznik. increase() liczyłby różnice timestampów
+        # i dawał wartości rzędu tysięcy przy każdym restarcie.
+        # changes() zlicza, ile razy wartość się zmieniła - czyli restarty.
+        expr: changes(container_start_time_seconds{name!=""}[15m]) > 3
+        # 10 minut, żeby wdrożenia i planowe restarty nie generowały hałasu.
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kontener {{ '{{ $labels.name }}' }} restartuje się w pętli"
+          description: "Na {{ '{{ $labels.instance }}' }} kontener zrestartował się ponad 3 razy w ciągu 15 minut i trwa to od 10 minut."
+
+      - alert: KontenerZatrzymany
+        # KontenerRestartujeSie łapie pętlę restartów, ale kontener, który padł
+        # i się NIE podniósł, znika z metryk cAdvisora bez śladu.
+        #
+        # Nie da się tego wykryć przez cAdvisora: zatrzymany kontener przestaje
+        # istnieć jako szereg czasowy, a `absent_over_time` na selektorze
+        # obejmującym wiele kontenerów zapali się dopiero, gdy zniknie ostatni
+        # z nich - czyli gdy padnie sam cAdvisor, co pokrywa już reguła wyżej.
+        # Dlatego źródłem jest demon Dockera: raportuje liczbę kontenerów
+        # w każdym stanie niezależnie od tego, czy jeszcze żyją.
+        #
+        # Wszystkie usługi w tym projekcie mają restart: unless-stopped, więc
+        # kontener w stanie `stopped` oznacza, że Docker się poddał.
+        expr: engine_daemon_container_states_containers{state="stopped"} > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ '{{ $labels.instance }}' }}: zatrzymane kontenery ({{ '{{ $value }}' }})"
+          description: "Kontener padł i nie wstał mimo restart: unless-stopped. Sprawdź `docker ps -a` i logi kontenera."
+
+  - name: zasoby
+    rules:
+      - alert: MaloMiejscaNaDysku
+        expr: |
+          (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}) < 0.15
+        # 15 minut: miejsce na dysku nie znika nagle, a chwilowe skoki podczas
+        # pobierania obrazów czy budowania są normalne.
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ '{{ $labels.instance }}' }}: mniej niż 15% wolnego miejsca"
+          description: "Punkt montowania {{ '{{ $labels.mountpoint }}' }}. Reakcja w ciągu doby."
+
+      - alert: BrakMiejscaNaDysku
+        expr: |
+          (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}) < 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ '{{ $labels.instance }}' }}: mniej niż 5% wolnego miejsca"
+          description: "Punkt montowania {{ '{{ $labels.mountpoint }}' }}. Wymaga natychmiastowej reakcji."
+
+      - alert: DyskZapelniSieWDobe
+        # Progi statyczne (15% / 5%) reagują dopiero, gdy jest już ciasno - przy
+        # szybkim przyroście może to być kwestia godzin. predict_linear patrzy
+        # na TEMPO i ostrzega, zanim wartość bezwzględna stanie się alarmująca.
+        #
+        # Okno 6h, a nie 1h: krótsze okno bierze za trend pojedynczy build albo
+        # `docker pull` i produkuje fałszywe alarmy. `for: 1h` domyka temat -
+        # trend musi się utrzymać, żeby cokolwiek poszło na kanał.
+        #
+        # Dodatkowy warunek < 50% wolnego: sama predykcja liniowa firuje przy
+        # nocnym vzdump (zapis i kasowanie dużego pliku zawyża trend), mimo że
+        # dysk jest niemal pusty. Prognoza ma sens dopiero, gdy realnie ubywa.
+        expr: |
+          predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}[6h], 24 * 3600) < 0
+            and (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes) < 0.5
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ '{{ $labels.instance }}' }}: dysk zapełni się w ciągu doby"
+          description: "Punkt montowania {{ '{{ $labels.mountpoint }}' }}. Prognoza z tempa przyrostu ostatnich 6 godzin."
+
+      - alert: WysokieZuzyciePamieci
+        expr: |
+          (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 0.92
+        # 20 minut: przy 25 GB przydzielonych na 31 GB fizycznych krótkie skoki
+        # są normalne, zwłaszcza podczas budowania obrazów.
+        for: 20m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ '{{ $labels.instance }}' }}: pamięć powyżej 92%"
+          description: "Utrzymuje się od 20 minut. Sygnał do rebalansu przydziału RAM."
+
+      - alert: WysokieObciazenieCPU
+        expr: |
+          100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 90
+        # 20 minut: budowanie obrazów potrafi wysycić CPU na kilkanaście minut
+        # i nie jest to awaria.
+        for: 20m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ '{{ $labels.instance }}' }}: CPU powyżej 90%"
+          description: "Utrzymuje się od 20 minut - to już nie jest chwilowy build."
+
+      - alert: RedisBliskoLimituPamieci
+        # KRYTYCZNE przy maxmemory-policy noeviction (patrz roles/redis/defaults).
+        # Wyczerpanie pamięci NIE kasuje najdawniej używanych kluczy - zwraca
+        # błąd OOM na każdy zapis, więc kolejki Horizona przestają przyjmować
+        # zadania. Alarm musi przyjść, ZANIM to nastąpi, bo po fakcie nie ma
+        # już czego ratować - sama rola nazywa ten alarm ważniejszym niż limit.
+        #
+        # 85%, nie 95%: przy włączonym AOF przepisywanie pliku forkuje proces,
+        # a kopiowane strony potrafią niemal podwoić zużycie. Margines musi
+        # obejmować ten szczyt.
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis na {{ '{{ $labels.instance }}' }}: pamięć powyżej 85% limitu"
+          description: "Limit to 384 MB. Przy noeviction dojście do 100% oznacza błędy zapisu w kolejkach, nie spowolnienie."
+
+  - name: aplikacja
+    rules:
+      - alert: AplikacjaNieodpowiada
+        expr: up{job="wolffire"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Aplikacja na {{ '{{ $labels.instance }}' }} nie odpowiada"
+          description: "Endpoint /metrics nie odpowiada od 5 minut."
+
+      - alert: BazaNieodpowiada
+        expr: up{job="postgres"} == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Postgres na {{ '{{ $labels.instance }}' }} nie odpowiada"
+          description: "Bez bazy aplikacja nie obsłuży żadnego żądania."
+
+      - alert: RedisNieodpowiada
+        # Redis trzyma sesje, cache i kolejki Laravela. Jego brak jest równie
+        # dotkliwy co brak bazy - stąd ta sama waga i ten sam czas co przy
+        # BazaNieodpowiada.
+        #
+        # redis_up, a nie up{job="redis"}: pierwsza metryka mówi, czy eksporter
+        # DOSZEDŁ do Redisa, druga tylko czy sam eksporter odpowiada. Martwy
+        # Redis przy żywym eksporterze to realny scenariusz - i właśnie ten
+        # przypadek jest tu istotny.
+        expr: redis_up == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis na {{ '{{ $labels.instance }}' }} nie odpowiada"
+          description: "Kolejki Horizona i sesje użytkowników przestały działać."
+
+      - alert: PostgresBliskoLimituPolaczen
+        # max_connections = 100 i brak pulera po stronie serwera: każdy proces
+        # php-fpm i każdy worker Horizona trzyma własne połączenie. Wyczerpanie
+        # limitu to "FATAL: sorry, too many clients" dla CAŁEJ aplikacji naraz,
+        # bez okresu przejściowego.
+        #
+        # max by(instance), bo pg_settings_max_connections niesie etykietę
+        # `server` - bez agregacji dzielenie nie znalazłoby pary dla licznika.
+        expr: |
+          sum by(instance) (pg_stat_activity_count)
+            / max by(instance) (pg_settings_max_connections) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Postgres na {{ '{{ $labels.instance }}' }}: powyżej 80% limitu połączeń"
+          description: "Przy 100% aplikacja dostanie 'too many clients'. Rozwiązaniem jest PgBouncer, nie większe max_connections - każde połączenie to osobny proces backendu."
+
+  # Dead-man's switch. Wzorzec przejęty z kube-prometheus-stack, gdzie reguła
+  # o tej samej nazwie pełni dokładnie tę rolę.
+  #
+  # DLACZEGO taki alert w ogóle istnieje: każdy inny alert w tym pliku milczy,
+  # dopóki nie ma awarii. Cisza na kanale Google Chat ma więc dwa możliwe
+  # znaczenia - albo wszystko działa, albo potok alertowania jest martwy
+  # (Prometheus nie ewaluuje reguł, Alertmanager nie przyjmuje alertów,
+  # calert nie dowozi wiadomości). Bez Watchdoga tych dwóch stanów nie da się
+  # od siebie odróżnić, a to właśnie ten drugi jest groźny: awaria wystąpi
+  # i nikt się o niej nie dowie.
+  #
+  # Watchdog odwraca logikę - firuje ZAWSZE, więc jego obecność w Alertmanagerze
+  # jest dowodem, że cała ścieżka reguła -> ewaluacja -> Alertmanager żyje.
+  # Zniknięcie Watchdoga (a nie pojawienie się alertu) jest sygnałem awarii.
+  - name: potok-alertowania
+    rules:
+      - alert: Watchdog
+        # vector(1) zwraca stałą 1 niezależnie od jakichkolwiek metryk - warunek
+        # jest spełniony przy każdej ewaluacji, więc alert jest permanentnie
+        # firing. Celowo bez `for`: ma wstać natychmiast po starcie Prometheusa.
+        expr: vector(1)
+        labels:
+          # severity: none, bo to nie jest awaria - to sygnał życia. Dzięki temu
+          # reguła nie łapie się na route dla severity="critical" ani na
+          # inhibit_rules dla severity="warning".
+          severity: none
+        annotations:
+          summary: "Potok alertowania działa"
+          description: >-
+            Alert firuje z założenia i nigdzie nie jest wysyłany (receiver
+            'null' w Alertmanagerze). Jego ZNIKNIĘCIE z listy alertów oznacza,
+            że Prometheus przestał ewaluować reguły lub stracił kontakt
+            z Alertmanagerem - czyli żaden inny alert też już nie dojdzie.

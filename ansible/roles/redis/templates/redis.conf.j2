@@ -1,0 +1,92 @@
+# Zarządzane przez Ansible. Zmiany na maszynie znikną przy następnym
+# uruchomieniu playbooka.
+#
+# Plik zastępuje konfigurację z pakietu w całości. Redis nie obsługuje włączania
+# katalogu z dokładkami (dyrektywa `include` przyjmuje pojedynczy plik, bez
+# wzorców), więc jedyną alternatywą byłoby doklejanie linii do cudzego pliku
+# przy każdym uruchomieniu - trudniejsze do przejrzenia niż komplet poniżej.
+#
+# Uzasadnienie doboru wartości: roles/redis/defaults/main.yml.
+
+################################## SIEĆ #######################################
+
+# Wyłącznie adres wewnętrzny. Bez tej linii Redis słucha na wszystkich
+# interfejsach, a baza bez uwierzytelnienia na publicznym adresie to jeden
+# z częściej wykorzystywanych wektorów ataku.
+bind {{ private_ip }}
+port {{ redis_port }}
+protected-mode yes
+tcp-backlog 511
+timeout 0
+tcp-keepalive 300
+
+# Hasło jest KONIECZNE, nie opcjonalne.
+#
+# Redis włącza tryb chroniony automatycznie, gdy nasłuchuje na adresie innym
+# niż loopback i nie ma ustawionego hasła - odrzuca wtedy wszystkie połączenia
+# z zewnątrz komunikatem DENIED. Wersja bez hasła wstawała poprawnie, ale była
+# nieosiągalna dla klastra k3s.
+#
+# Niezależnie od tego: izolacja sieciowa nie wystarcza jako jedyna warstwa,
+# skoro do segmentu dbs sięga cały klaster. To samo hasło trafia do .env
+# aplikacji (rola wolffire) i do eksportera metryk.
+requirepass {{ wolffire_redis_password }}
+
+################################# OGÓLNE ######################################
+
+daemonize no
+# Jednostka z pakietu jest typu notify - bez tego systemd czeka na gotowość
+# w nieskończoność i ostatecznie uznaje start za nieudany.
+supervised systemd
+pidfile /run/redis/redis-server.pid
+loglevel notice
+logfile /var/log/redis/redis-server.log
+databases 16
+
+################################ TRWAŁOŚĆ #####################################
+
+dir /var/lib/redis
+
+# Snapshoty RDB wyłączone. Trwałość zapewnia AOF, a każdy dodatkowy BGSAVE to
+# kolejny fork na maszynie, która dzieli 3 GB RAM z Postgresem. AOF i tak
+# zapisuje przy przepisywaniu preambułę w formacie RDB, więc nie tracimy
+# szybkiego odtwarzania.
+save ""
+
+appendonly {{ redis_appendonly }}
+appendfilename "appendonly.aof"
+appenddirname "appendonlydir"
+appendfsync {{ redis_appendfsync }}
+
+# Podczas przepisywania AOF nie wstrzymujemy fsynców: pauza chroni przed skokiem
+# I/O, ale w zamian wydłuża okno utraty danych do czasu trwania całego rewrite'u.
+no-appendfsync-on-rewrite no
+
+# Rewrite przy podwojeniu rozmiaru pliku, ale nie częściej niż od 64 MB - bez
+# dolnego progu mały plik przepisywałby się bez przerwy.
+auto-aof-rewrite-percentage 100
+auto-aof-rewrite-min-size 64mb
+
+# Uszkodzony ogon AOF (typowo po nagłej utracie zasilania) jest obcinany zamiast
+# blokować start. Alternatywą jest Redis, który nie wstaje bez ręcznej interwencji.
+aof-load-truncated yes
+aof-use-rdb-preamble yes
+
+################################## PAMIĘĆ #####################################
+
+maxmemory {{ redis_maxmemory }}
+maxmemory-policy {{ redis_maxmemory_policy }}
+
+################################# KLIENCI #####################################
+
+# Bufor wyjściowy klienta pub/sub ograniczony - bez tego subskrybent, który
+# przestał czytać (np. zawieszony worker), rośnie w pamięci bez limitu i wywraca
+# cały proces, mimo że maxmemory dotyczy tylko zbioru danych.
+client-output-buffer-limit normal 0 0 0
+client-output-buffer-limit slave 256mb 64mb 60
+client-output-buffer-limit pubsub 32mb 8mb 60
+
+# Zapytania wolniejsze niż 10 ms trafiają do slowloga - przy kolejkach zwykle
+# oznaczają komendę O(n) na dużej liście.
+slowlog-log-slower-than 10000
+slowlog-max-len 128

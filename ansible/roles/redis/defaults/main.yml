@@ -1,0 +1,41 @@
+redis_port: 6379
+redis_exporter_port: 9121
+
+# --- Pamięć ---
+#
+# Maszyna ma 3 GB RAM dzielone z Postgresem (shared_buffers 512 MB + praca
+# backendów). Redis dostaje 384 MB twardego limitu, bo przy włączonym AOF
+# przepisywanie pliku odbywa się przez fork - w najgorszym razie proces potomny
+# rozjeżdża się na kopiowanych stronach niemal do rozmiaru zbioru danych,
+# czyli szczyt to około 768 MB. Ustawienie limitu bliżej połowy RAM-u
+# oznaczałoby OOM killera wchodzącego dokładnie w trakcie rewrite'u.
+#
+# Zbiór roboczy to kolejki Horizona i cache/sesje Laravela - przy tym ruchu
+# 384 MB jest z dużym zapasem. Alarm o zbliżaniu się do limitu jest ważniejszy
+# niż sam limit, bo przy noeviction wyczerpanie pamięci = błędy zapisu.
+redis_maxmemory: 384mb
+
+# KRYTYCZNE. Domyślna polityka (noeviction jest domyślna w Redisie od 3.x, ale
+# gotowce i obrazy często ustawiają allkeys-lru) usuwałaby najdawniej używane
+# klucze przy zapełnieniu pamięci. W tym Redisie leżą kolejki Laravel Horizona:
+# eksmisja skasowałaby zadania w oczekiwaniu - po cichu, bez błędu, bez śladu
+# w logach. Zamówienie po prostu nigdy by się nie przetworzyło.
+# Przy noeviction zapis do pełnego Redisa kończy się błędem OOM, który Laravel
+# zgłasza jako wyjątek - awaria głośna zamiast cichej utraty danych.
+redis_maxmemory_policy: noeviction
+
+# Trwałość kolejek. Bez AOF restart maszyny gubi wszystkie zadania, które nie
+# trafiły do ostatniego snapshotu RDB.
+redis_appendonly: "yes"
+# everysec, nie always: `always` to fsync przy każdym zapisie i realny spadek
+# przepustowości, a okno utraty równe jednej sekundzie jest akceptowalne dla
+# zadań w kolejce (Horizon i tak ponawia zadania przerwane w locie).
+redis_appendfsync: everysec
+
+# Wersja eksportera przypięta - "latest" oznacza inny wynik przy każdym
+# odtworzeniu środowiska.
+redis_exporter_version: "1.88.0"
+redis_exporter_user: redis_exporter
+redis_exporter_dir: /opt/redis_exporter
+# Hasło eksportera trzymamy poza jednostką systemd - patrz komentarz w tasks/main.yml.
+redis_exporter_config_dir: /etc/redis_exporter

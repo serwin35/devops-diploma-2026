@@ -1,0 +1,6 @@
+# Interfejs, na którym OVH widzi cały blok /64 jako on-link.
+ipv6_uplink: vmbr0
+
+# Podprefiksy wydzielone dla segmentów SDN. Host je routuje i odpowiada za nie
+# przez proxy NDP. Wartości pochodzą z outputu Terraforma 'ipv6_subnets'.
+ipv6_delegated_prefixes: []

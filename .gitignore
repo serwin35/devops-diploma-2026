@@ -32,3 +32,6 @@ keys/*_ed25519
 
 # Stan bootstrapu AWS - zawiera klucze IAM
 terraform/bootstrap/terraform.tfstate*
+
+# Lokalny stan Claude Code / claude-mem
+.claude/

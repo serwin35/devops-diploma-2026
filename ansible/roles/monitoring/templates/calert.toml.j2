@@ -1,0 +1,21 @@
+# Zarządzane przez Ansible.
+#
+# Alertmanager wysyła własny format JSON, którego Google Chat nie rozumie -
+# Chat oczekuje prostego {"text": "..."}. calert jest tłumaczem między nimi:
+# przyjmuje webhook Alertmanagera i przekłada go na wiadomość Chatu.
+[app]
+address = "0.0.0.0:6000"
+server_timeout = "10s"
+enable_request_logs = true
+log = "info"
+
+[providers.gchat]
+type = "google_chat"
+endpoint = "{{ google_chat_webhook_url }}"
+max_idle_conns = 50
+timeout = "30s"
+template = "/app/config/message.tmpl"
+# Alerty o tej samej przyczynie trafiają do jednego wątku przez 12 h,
+# zamiast zasypywać kanał osobnymi wiadomościami.
+thread_ttl = "12h"
+dry_run = false

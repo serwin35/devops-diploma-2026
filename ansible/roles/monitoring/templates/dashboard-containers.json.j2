@@ -1,0 +1,216 @@
+{
+  "title": "WolfFire - kontenery",
+  "uid": "wolffire-containers",
+  "tags": ["wolffire", "kontenery", "docker"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "host",
+        "label": "Maszyna",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(container_last_seen, instance)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "kontener",
+        "label": "Kontener",
+        "description": "Lista zawęża się do kontenerów widzianych na wybranych maszynach - zmienne w Grafanie mogą się odwoływać do siebie nawzajem.",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(container_last_seen{instance=~\"$host\", name!=\"\"}, name)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Kontenery widoczne",
+      "description": "Liczba kontenerów raportowanych przez cAdvisor na wybranych maszynach.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "targets": [{ "expr": "count(container_last_seen{instance=~\"$host\", name=~\"$kontener\"}) or vector(0)", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Restarty (zakres)",
+      "description": "Zmiany znacznika czasu startu kontenera. Liczymy changes(), bo container_start_time_seconds to moment startu, a nie licznik - increase() dawałby tu wartości rzędu tysięcy.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "targets": [{
+        "expr": "sum(changes(container_start_time_seconds{instance=~\"$host\", name=~\"$kontener\"}[$__range])) or vector(0)",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 5 }] }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Zabicia OOM (zakres)",
+      "description": "Kontenery ubite przez jądro za przekroczenie limitu pamięci. Każde wskazanie powyżej zera to za mały limit albo wyciek.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "targets": [{
+        "expr": "sum(increase(container_oom_events_total{instance=~\"$host\", name=~\"$kontener\"}[$__range])) or vector(0)",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "CPU kontenerów łącznie",
+      "description": "Suma rdzeni zużywanych przez wybrane kontenery. 1 = jeden rdzeń wysycony w całości.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "targets": [{
+        "expr": "sum(rate(container_cpu_usage_seconds_total{instance=~\"$host\", name=~\"$kontener\"}[5m])) or vector(0)",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "decimals": 2 } }
+    },
+    {
+      "type": "stat",
+      "title": "Pamięć kontenerów łącznie",
+      "description": "Suma working set - pamięć, której kontener faktycznie używa i której jądro nie odzyska bez swapowania.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "targets": [{
+        "expr": "sum(container_memory_working_set_bytes{instance=~\"$host\", name=~\"$kontener\"}) or vector(0)",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU wg kontenera",
+      "description": "Rdzenie zużywane przez kontener. Wartość 0.5 oznacza pół rdzenia, niezależnie od tego, ile ich ma maszyna.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 4 },
+      "targets": [{
+        "expr": "sum by (instance, name) (rate(container_cpu_usage_seconds_total{instance=~\"$host\", name=~\"$kontener\"}[5m]))",
+        "legendFormat": "{{ '{{instance}}' }} / {{ '{{name}}' }}",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "decimals": 3, "custom": { "fillOpacity": 10 } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Pamięć wg kontenera a limit",
+      "description": "Working set kontenera zestawiony z limitem z compose. Kontenery bez limitu raportują wartość równą pamięci maszyny - takie serie są odfiltrowane, bo zaburzają skalę.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        {
+          "expr": "container_memory_working_set_bytes{instance=~\"$host\", name=~\"$kontener\"}",
+          "legendFormat": "{{ '{{name}}' }}",
+          "refId": "A"
+        },
+        {
+          "expr": "container_spec_memory_limit_bytes{instance=~\"$host\", name=~\"$kontener\"} < 1e12 > 0",
+          "legendFormat": "{{ '{{name}}' }} - limit",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "fillOpacity": 10 } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Ruch sieciowy wg kontenera",
+      "description": "Bajty na sekundę odebrane i wysłane przez interfejs kontenera.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 13 },
+      "targets": [
+        {
+          "expr": "sum by (name) (rate(container_network_receive_bytes_total{instance=~\"$host\", name=~\"$kontener\"}[5m]))",
+          "legendFormat": "{{ '{{name}}' }} ↓",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (name) (rate(container_network_transmit_bytes_total{instance=~\"$host\", name=~\"$kontener\"}[5m]))",
+          "legendFormat": "{{ '{{name}}' }} ↑",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Zapis i odczyt dysku wg kontenera",
+      "description": "Warstwa zapisywalna kontenera i wolumeny. Stały zapis w kontenerze bezstanowym zwykle oznacza logi lądujące w obrazie zamiast na stdout.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 13 },
+      "targets": [
+        {
+          "expr": "sum by (name) (rate(container_fs_reads_bytes_total{instance=~\"$host\", name=~\"$kontener\"}[5m]))",
+          "legendFormat": "{{ '{{name}}' }} odczyt",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (name) (rate(container_fs_writes_bytes_total{instance=~\"$host\", name=~\"$kontener\"}[5m]))",
+          "legendFormat": "{{ '{{name}}' }} zapis",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Restarty kontenerów",
+      "description": "Liczba restartów w oknie 15 minut. Płaskie zero to stan docelowy; piła oznacza kontener w pętli restartów.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "targets": [{
+        "expr": "sum by (instance, name) (changes(container_start_time_seconds{instance=~\"$host\", name=~\"$kontener\"}[15m]))",
+        "legendFormat": "{{ '{{instance}}' }} / {{ '{{name}}' }}",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60 } } }
+    },
+    {
+      "type": "table",
+      "title": "Czas życia kontenerów",
+      "description": "Ile czasu minęło od startu każdego kontenera. Świeży czas życia przy braku wdrożenia oznacza restart, o którym nikt nie wie.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+      "targets": [{
+        "expr": "time() - container_start_time_seconds{instance=~\"$host\", name=~\"$kontener\"}",
+        "format": "table",
+        "instant": true,
+        "refId": "A"
+      }],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true, "job": true, "id": true, "image": true },
+            "renameByName": { "instance": "Maszyna", "name": "Kontener", "Value": "Czas życia" }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Czas życia" }, "properties": [{ "id": "unit", "value": "s" }] }
+        ]
+      }
+    }
+  ]
+}

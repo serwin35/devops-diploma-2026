@@ -1,0 +1,109 @@
+// Zarządzane przez Ansible (roles/jenkins/templates/backup-pipeline.groovy.j2).
+//
+// Definicja zadania backupowego. Trzymana w osobnym pliku, a nie wklejona
+// w jenkins.yaml, z jednego powodu: pipeline w JCasC musi przejść przez łańcuch
+// YAML -> Groovy (Job DSL) -> Groovy (pipeline) -> shell, gdzie każde ogniwo ma
+// własne cudzysłowy i własną składnię podstawiania zmiennych. Wielolinijkowe
+// polecenia powłoki nie dają się w tym zapisać bez ciągu ucieczek, a to
+// najprostsza droga do błędu, który wyjdzie dopiero w nocy.
+//
+// Zakres kopii: zrzut bazy wolffire i wysłanie go do S3 przez restic.
+// Świadomie BEZ vzdump maszyn przez API Proxmoxa: vzdump zapisuje archiwum na
+// storage hypervisora, a API nie daje prostej ścieżki, żeby ten plik pobrać
+// na agenta i oddać resticowi. Kopia leżałaby więc na tej samej maszynie,
+// której ma dotyczyć awaria - czyli nie byłaby kopią zapasową. Kopie maszyn
+// robi harmonogram vzdump po stronie Proxmoxa, ten pipeline dowozi do S3 to,
+// czego z hypervisora nie da się odtworzyć: dane.
+pipeline {
+  agent {
+    label '{{ jenkins_agent_label }}'
+  }
+
+  options {
+    // Dwie kopie naraz to dwa zrzuty tej samej bazy i dwie sesje restica
+    // walczące o blokadę repozytorium.
+    disableConcurrentBuilds()
+    // Zabezpieczenie przed zawieszonym połączeniem do bazy albo do S3 -
+    // bez limitu taki build blokowałby agenta do końca świata.
+    timeout(time: 1, unit: 'HOURS')
+  }
+
+  environment {
+    DB_HOST = '{{ jenkins_backup_db_host }}'
+    DB_NAME = '{{ jenkins_backup_db_name }}'
+    RESTIC_REPOSITORY = '{{ jenkins_backup_restic_repo }}'
+    AWS_DEFAULT_REGION = '{{ jenkins_backup_region }}'
+    // Cache restica w katalogu builda: agent jest efemeryczny, więc cache
+    // i tak nie przeżyje builda, a domyślna ścieżka (~/.cache) potrafi nie
+    // istnieć w kontenerze i kończy się ostrzeżeniem przy każdym poleceniu.
+    RESTIC_CACHE_DIR = "${WORKSPACE}/.restic-cache"
+  }
+
+  stages {
+    stage('Zrzut bazy wolffire') {
+      steps {
+        // Użytkownik i hasło z magazynu poświadczeń. pg_dump czyta PGUSER
+        // i PGPASSWORD ze środowiska, więc hasło nie trafia do linii poleceń,
+        // gdzie widziałby je każdy `ps` na maszynie agenta.
+        withCredentials([usernamePassword(credentialsId: '{{ jenkins_cred_db }}',
+                                          usernameVariable: 'PGUSER',
+                                          passwordVariable: 'PGPASSWORD')]) {
+          sh '''
+            set -eu
+            mkdir -p dumps
+            # Format custom (-F c), nie plain SQL: pozwala odtworzyć pojedynczą
+            # tabelę, jest skompresowany i nie zależy od kolejności wykonania.
+            pg_dump -h "$DB_HOST" -d "$DB_NAME" -F c -f "dumps/$DB_NAME.dump"
+            ls -lh dumps
+          '''
+        }
+      }
+    }
+
+    stage('Wyślij kopię do S3 przez restic') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: '{{ jenkins_cred_restic_s3 }}',
+                                          usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                          passwordVariable: 'AWS_SECRET_ACCESS_KEY'),
+                         string(credentialsId: '{{ jenkins_cred_restic_password }}',
+                                variable: 'RESTIC_PASSWORD')]) {
+          sh '''
+            set -eu
+            # Pierwsze uruchomienie zakłada repozytorium, każde kolejne zastaje
+            # je gotowe. `cat config` jest tanie i nie zakłada blokady, więc
+            # nadaje się na test istnienia lepiej niż `snapshots`.
+            if ! restic cat config >/dev/null 2>&1; then
+              echo "Repozytorium nie istnieje - zakładam nowe."
+              restic init
+            fi
+
+            # Uwaga na przewidywalny hałas w logu: restic zakłada na czas
+            # operacji plik blokady i próbuje go potem skasować, a klucz IAM
+            # nie ma prawa DeleteObject. Kończy się to komunikatem
+            # "error while unlocking ... explicit deny" przy każdym przebiegu.
+            # Nie jest to błąd kopii - restic kończy się kodem 0, a porzucone
+            # blokady są dla niego przeterminowane (inny proces, inny host)
+            # i nie blokują kolejnych kopii; sprząta je reguła cyklu życia
+            # bucketa. Alternatywa - danie Jenkinsowi prawa kasowania obiektów -
+            # oznaczałaby, że przejęty token kasuje kopie zapasowe, czyli
+            # dokładnie to, przed czym te kopie mają chronić.
+            restic backup --tag nocna --host jenkins dumps
+            restic snapshots --tag nocna --latest 1
+            # Świadomie bez `restic forget --prune`: użytkownik IAM Jenkinsa nie
+            # ma prawa kasowania obiektów (terraform/bootstrap/iam.tf), a retencja
+            # to reguła cyklu życia bucketa. Przejęty token nie skasuje kopii.
+          '''
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      // Zrzut bazy potrafi ważyć gigabajty, a agent zaraz znika - sprzątanie
+      // jest tu na wypadek buildu zatrzymanego przed usunięciem kontenera.
+      // deleteDir zamiast cleanWs: krok z rdzenia, bez wtyczki ws-cleanup.
+      deleteDir()
+    }
+  }
+}

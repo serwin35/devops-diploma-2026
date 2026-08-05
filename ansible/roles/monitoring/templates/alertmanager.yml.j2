@@ -1,0 +1,77 @@
+# Zarządzane przez Ansible.
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: gchat
+  # Grupowanie po alercie i maszynie: dziesięć podów padających z tego samego
+  # powodu ma dać jedno powiadomienie, nie dziesięć.
+  group_by: ["alertname", "instance"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  # Trasy sprawdzane są po kolei, a pierwsze dopasowanie kończy wyszukiwanie
+  # (brak `continue: true`). Watchdog musi być PIERWSZY, żeby żadna kolejna
+  # reguła nie mogła go przechwycić i wysłać na Google Chat.
+  routes:
+    # Watchdog firuje bez przerwy (patrz alerts.yml) - wpuszczony do trasy
+    # domyślnej zasypywałby kanał wiadomością co repeat_interval, czyli co
+    # 4 godziny, przez całą dobę. Nie ma go kto czytać i po tygodniu wszyscy
+    # wyciszają kanał, razem z alertami, które naprawdę coś znaczą.
+    #
+    # DLACZEGO mimo to trafia do Alertmanagera, skoro nikt go nie dostaje:
+    # jego obecność na liście /api/v2/alerts jest dowodem, że potok
+    # Prometheus -> Alertmanager działa. Docelowo to tej trasy podpina się
+    # zewnętrzny odbiorca typu Dead Man's Snitch czy healthchecks.io, który
+    # alarmuje, gdy sygnał PRZESTANIE przychodzić. Do tego czasu receiver
+    # 'null' jest świadomym miejscem na przyszłego odbiorcę, a nie zaślepką
+    # ukrywającą problem.
+    - matchers: ['alertname="Watchdog"']
+      receiver: "null"
+
+{% if alertmanager_sns_topic_arn %}
+    # Kopia na e-mail (SNS) OBOK Chata: continue sprawia, że alert po
+    # dopasowaniu tej trasy jest dalej sprawdzany przez kolejne - trafia
+    # więc i na e-mail, i do trasy gchat.
+    - matchers: ['severity=~"warning|critical"']
+      receiver: sns-email
+      continue: true
+{% endif %}
+
+    - matchers: ['severity="critical"']
+      receiver: gchat
+      repeat_interval: 1h
+
+inhibit_rules:
+  # Gdy maszyna nie odpowiada, nie ma sensu alarmować osobno o każdym
+  # eksporterze na niej stojącym.
+  - source_matchers: ['alertname="MaszynaNieodpowiada"']
+    target_matchers: ['severity="warning"']
+    equal: ["instance"]
+
+receivers:
+  - name: gchat
+    # calert stoi w tej samej sieci Dockera, więc adresujemy go nazwą usługi.
+    webhook_configs:
+      - url: "http://calert:{{ calert_port }}/dispatch"
+        send_resolved: true
+
+{% if alertmanager_sns_topic_arn %}
+  - name: sns-email
+    sns_configs:
+      - topic_arn: "{{ alertmanager_sns_topic_arn }}"
+        send_resolved: true
+        sigv4:
+          region: "{{ alertmanager_sns_region }}"
+          access_key: "{{ alertmanager_sns_access_key_id }}"
+          secret_key: "{{ alertmanager_sns_secret_access_key }}"
+        subject: '{% raw %}[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }} na {{ .CommonLabels.instance }}{% endraw %}'
+        message: '{% raw %}{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ .Annotations.description }}{{ "\n\n" }}{{ end }}{% endraw %}'
+{% endif %}
+
+  # Odbiorca bez żadnej konfiguracji - Alertmanager przyjmuje alert, oznacza go
+  # jako obsłużony i nie robi z nim nic więcej. Nazwa w cudzysłowie celowo:
+  # w YAML-u gołe null to wartość pusta, nie napis, i Alertmanager odrzuciłby
+  # konfigurację błędem o odbiorcy bez nazwy.
+  - name: "null"

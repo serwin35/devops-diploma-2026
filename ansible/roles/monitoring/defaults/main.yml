@@ -1,0 +1,50 @@
+monitoring_dir: /opt/monitoring
+
+# Wersje przypięte świadomie - "latest" oznacza, że odtworzenie środowiska za
+# pół roku da inny wynik niż dziś.
+prometheus_image: prom/prometheus:v3.1.0
+grafana_image: grafana/grafana:11.5.1
+alertmanager_image: prom/alertmanager:v0.28.0
+loki_image: grafana/loki:3.3.2
+
+prometheus_port: 9090
+grafana_port: 3000
+alertmanager_port: 9093
+loki_port: 3100
+
+# Bez ograniczeń TSDB rośnie w nieskończoność i po cichu zapełnia dysk.
+# Dwa limity naraz: czasowy i rozmiarowy - zadziała ten, który wypadnie pierwszy.
+prometheus_retention_time: 15d
+prometheus_retention_size: 20GB
+
+# Porty eksporterów - muszą się zgadzać z grupą bezpieczeństwa 'metrics'
+# zdefiniowaną w Terraformie.
+node_exporter_port: 9100
+cadvisor_port: 8081
+postgres_exporter_port: 9187
+redis_exporter_port: 9121
+
+grafana_admin_user: admin
+# Hasło pochodzi z group_vars/all/secrets.sops.yml
+
+# Dashboardy z grafana.com pobierane przy wdrożeniu. Klucz to nazwa pliku,
+# wartość to identyfikator na grafana.com.
+# Dashboard logów piszemy własny (dashboard-logs.json.j2) - gotowce z grafana.com
+# zakładają własne schematy etykiet (np. ), których nasz Alloy nie produkuje,
+# i kończą się błędem parsowania LogQL.
+grafana_dashboards:
+  node-exporter: 1860      # Node Exporter Full - metryki systemowe
+  docker-cadvisor: 14282   # cAdvisor - kontenery i zużycie zasobów
+
+# Adapter Alertmanager -> Google Chat.
+calert_image: ghcr.io/mr-karan/calert:latest
+calert_port: 6000
+
+# E-mail przez AWS SNS: Alertmanager publikuje natywnie (sns_configs), a
+# subskrypcja e-mail tematu dostarcza wiadomość. ARN wypełnia bootstrap
+# Terraforma (output alerts_sns_topic_arn); klucze IAM użytkownika
+# wolffire-alertmanager leżą w group_vars/all/secrets.sops.yml. Pusty ARN
+# wyłącza kanał e-mail w szablonie - stack działa wtedy jak dotychczas,
+# wyłącznie z Google Chat.
+alertmanager_sns_topic_arn: ""
+alertmanager_sns_region: "us-east-1"

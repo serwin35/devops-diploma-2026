@@ -1,0 +1,8 @@
+helm_version: v3.16.4
+wolffire_chart_src: "{{ playbook_dir }}/../helm/wolffire"
+wolffire_chart_dest: /opt/wolffire-chart
+wolffire_values_dest: /opt/wolffire-values.yaml
+wolffire_namespace: wolffire
+wolffire_registry: ghcr.io/serwin35/wf-chartapp-diploma
+wolffire_image_tag: latest
+ghcr_username: serwin35

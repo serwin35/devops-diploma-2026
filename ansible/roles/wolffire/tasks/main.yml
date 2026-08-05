@@ -1,0 +1,132 @@
+- name: Otwórz port aplikacji
+  ansible.builtin.include_role:
+    name: security
+    tasks_from: open_ports
+  vars:
+    ports:
+      - { port: "{{ wolffire_http_port }}", from: "{{ bastion_ip }}", comment: "Aplikacja przez tunel" }
+      - { port: 9253, from: "{{ monitoring_ip }}", comment: "php-fpm exporter" }
+  tags: [wolffire]
+
+- name: Utwórz katalog aplikacji
+  ansible.builtin.file:
+    path: "{{ wolffire_dir }}"
+    state: directory
+    mode: "0750"
+  tags: [wolffire]
+
+# Rejestr jest prywatny, więc maszyna musi się uwierzytelnić, żeby pobrać obrazy.
+# Token ma zakres wyłącznie read:packages.
+- name: Zaloguj się do rejestru obrazów
+  community.docker.docker_login:
+    registry_url: ghcr.io
+    username: "{{ ghcr_username }}"
+    password: "{{ ghcr_token }}"
+  no_log: true
+  tags: [wolffire]
+
+- name: Wygeneruj plik środowiskowy aplikacji
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ wolffire_dir }}/.env.app"
+    mode: "0640"
+  no_log: true
+  notify: restart wolffire
+  tags: [wolffire]
+
+# Wersja obrazu w osobnym pliku, nie w compose.yml. Dzięki temu wdrożenie
+# sprowadza się do podmiany jednej linii i przeładowania jednostki - pipeline
+# nie musi umieć Dockera ani mieć dostępu do jego gniazda.
+- name: Ustaw wersję obrazów
+  ansible.builtin.copy:
+    dest: "{{ wolffire_dir }}/.env"
+    mode: "0644"
+    content: "IMAGE_TAG={{ wolffire_image_tag }}\n"
+  notify: restart wolffire
+  tags: [wolffire]
+
+- name: Wygeneruj compose
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ wolffire_dir }}/compose.yml"
+    mode: "0640"
+  notify: restart wolffire
+  tags: [wolffire]
+
+- name: Zainstaluj jednostkę systemd
+  ansible.builtin.template:
+    src: wolffire.service.j2
+    dest: /etc/systemd/system/wolffire.service
+    mode: "0644"
+  notify:
+    - reload systemd wolffire
+    - restart wolffire
+  tags: [wolffire]
+
+- name: Włącz aplikację
+  ansible.builtin.systemd_service:
+    name: wolffire
+    state: started
+    enabled: true
+    daemon_reload: true
+  tags: [wolffire]
+
+# Handlery domyślnie odpalają się na końcu playa - ale migracje i weryfikacja
+# poniżej muszą działać już na NOWEJ konfiguracji. Bez tego zmiana np. hasła
+# Redisa kończy się migracją na starym kontenerze z nowym .env.
+- name: Zastosuj zmiany konfiguracji przed migracjami
+  ansible.builtin.meta: flush_handlers
+
+- name: Poczekaj na bazę
+  ansible.builtin.command: docker compose exec -T postgres pg_isready -U {{ wolffire_db_user }}
+  args:
+    chdir: "{{ wolffire_dir }}"
+  register: pg_ready
+  retries: 20
+  delay: 5
+  until: pg_ready.rc == 0
+  changed_when: false
+  # Weryfikacja jest odczytem, więc idzie także w --check. Inaczej zadanie
+  # zostaje pominięte, rejestr jest pusty i until/failed_when wywala przebieg.
+  check_mode: false
+  tags: [wolffire]
+
+# Migracje uruchamiane osobnym kontenerem z tego samego obrazu, a nie przy starcie
+# php-fpm - inaczej przy wielu replikach każda próbowałaby migrować równolegle.
+- name: Uruchom migracje
+  ansible.builtin.command: >-
+    docker compose run --rm --no-deps php php artisan migrate --force
+  args:
+    chdir: "{{ wolffire_dir }}"
+  register: migracje
+  changed_when: "'Nothing to migrate' not in migracje.stdout"
+  tags: [wolffire]
+
+# Cache Laravela żyje w warstwie zapisu kontenera, nie w wolumenie - ginie przy
+# każdym odtworzeniu kontenera, więc odbudowujemy go bezwarunkowo. Jest to jednak
+# odświeżenie do tego samego stanu, a nie zmiana: przy niezmienionej konfiguracji
+# powstają identyczne pliki. Wcześniejsze `changed_when: true` raportowało zmianę
+# w każdym przebiegu i playbook nigdy nie osiągał stanu ustalonego.
+- name: Zbuduj cache konfiguracji i tras
+  ansible.builtin.command: >-
+    docker compose exec -T php php artisan {{ item }}
+  args:
+    chdir: "{{ wolffire_dir }}"
+  loop: [config:cache, route:cache, view:cache]
+  changed_when: false
+  failed_when: false
+  tags: [wolffire]
+
+- name: Sprawdź, czy aplikacja odpowiada
+  ansible.builtin.uri:
+    url: "http://{{ private_ip }}:{{ wolffire_http_port }}/up"
+    status_code: [200]
+  register: app_up
+  retries: 12
+  delay: 5
+  until: app_up.status == 200
+  changed_when: false
+  # Weryfikacja jest odczytem, więc idzie także w --check. Inaczej zadanie
+  # zostaje pominięte, rejestr jest pusty i until/failed_when wywala przebieg.
+  check_mode: false
+  tags: [wolffire]

@@ -1,0 +1,19 @@
+# Hypervisor jest wyłączony z UFW świadomie.
+#
+# Po pierwsze, ma już własny firewall opisany w Terraformie (pve-firewall na
+# nftables) - dwa narzędzia zarządzające tym samym zestawem reguł wchodzą sobie
+# w drogę. Po drugie, UFW ustawia domyślną politykę FORWARD na deny, a hypervisor
+# routuje cały ruch między segmentami SDN i wykonuje NAT do internetu.
+# Włączenie go tutaj odcina wszystkie maszyny od sieci.
+- name: Firewall systemowy
+  ansible.builtin.include_tasks: ufw.yml
+  when: "'proxmox' not in group_names"
+  tags: [security, firewall]
+
+- name: Ochrona przed atakami słownikowymi
+  ansible.builtin.include_tasks: fail2ban.yml
+  tags: [security, fail2ban]
+
+- name: Automatyczne aktualizacje bezpieczeństwa
+  ansible.builtin.include_tasks: unattended_upgrades.yml
+  tags: [security, updates]

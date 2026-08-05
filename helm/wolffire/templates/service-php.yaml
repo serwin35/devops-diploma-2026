@@ -1,0 +1,18 @@
+# Serwis php-fpm. Nazwa DNS wchodzi do configu nginx przez wspólny helper
+# wolffire.phpServiceName - patrz configmap-nginx.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "wolffire.phpServiceName" . }}
+  labels:
+    {{- include "wolffire.labels" . | nindent 4 }}
+    app.kubernetes.io/component: php
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "wolffire.selectorLabels" (dict "ctx" . "component" "php") | nindent 4 }}
+  ports:
+    - name: fpm
+      port: 9000
+      targetPort: fpm
+      protocol: TCP

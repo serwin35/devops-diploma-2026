@@ -1,0 +1,78 @@
+# Topologia połączeń SSH.
+#
+# Model dostępu: konto IMIENNE przechodzi przez bastion do maszyny docelowej.
+#
+#   ssh mserwinowski@wf-bastion-1            -> bastion
+#   ssh mserwinowski@wf-wolffire-dev-app-1   -> przez bastion do maszyny dev
+#
+# Działa dzięki 'ProxyJump %r@wf-bastion-1': %r podstawia nazwę użytkownika
+# z polecenia, więc ta sama tożsamość jest używana na obu przeskokach.
+# Konta imienne zakłada rola `login` na podstawie plików keys/humans/*.pub -
+# nazwa pliku jest nazwą użytkownika.
+#
+# Bez podania użytkownika SSH użyje Twojej lokalnej nazwy. Ansible łączy się
+# jako `ansible` (remote_user w ansible.cfg) - konto maszynowe, nie imienne.
+#
+# Prefiks wf- jest konieczny, bo ~/.ssh/config wciąga konfiguracje innych
+# projektów, w których istnieją hosty 'proxmox-1' i 'bastion-1'.
+#
+# Żeby aliasy działały z dowolnego katalogu, w ~/.ssh/config jest:
+#   Include /Users/serwin/Projects/DevOps-Kurs/devops-diploma-2026/ansible/ssh_config
+
+Host wf-*
+    # Domyślnie konto maszynowe - jawne 'ssh mserwinowski@wf-...' je nadpisuje,
+    # a ProxyJump %r@ przenosi wybraną nazwę także na przeskok przez bastion.
+    User ansible
+    Port 22022
+    # Klucz maszynowy (używa go Ansible) i osobisty - oba wsiewane przez cloud-init.
+    # Ścieżka bezwzględna, bo plik jest wciągany także z ~/.ssh/config.
+    IdentityFile /Users/serwin/Projects/DevOps-Kurs/devops-diploma-2026/keys/ansible_ed25519
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+    ServerAliveInterval 30
+    StrictHostKeyChecking accept-new
+
+# --- brzeg: jedyne maszyny osiągalne bezpośrednio ---
+
+# Bastion ma publiczny adres IPv4 - to przez niego wchodzi się do reszty.
+Host wf-bastion-1
+    HostName 51.83.139.3
+
+# Hypervisor. Dostępny bezpośrednio na czas prac administracyjnych;
+# docelowo wyłącznie z bastionu.
+Host wf-proxmox-1
+    HostName 57.128.192.26
+
+# --- segment apps (10.0.120.0/24) ---
+
+Host wf-cicd-1
+    HostName 10.0.120.10
+    ProxyJump %r@wf-bastion-1
+
+Host wf-monitoring-1
+    HostName 10.0.120.20
+    ProxyJump %r@wf-bastion-1
+
+Host wf-wolffire-dev-app-1
+    HostName 10.0.120.30
+    ProxyJump %r@wf-bastion-1
+
+# --- segment k3s (10.0.130.0/24) ---
+
+Host wf-k3s-server-1
+    HostName 10.0.130.10
+    ProxyJump %r@wf-bastion-1
+
+Host wf-k3s-agent-1
+    HostName 10.0.130.11
+    ProxyJump %r@wf-bastion-1
+
+Host wf-k3s-agent-2
+    HostName 10.0.130.12
+    ProxyJump %r@wf-bastion-1
+
+# --- segment dbs (10.0.140.0/24) ---
+
+Host wf-wolffire-prod-db-1
+    HostName 10.0.140.10
+    ProxyJump %r@wf-bastion-1

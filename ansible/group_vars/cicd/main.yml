@@ -1,0 +1,17 @@
+# Tunel Cloudflare tej maszyny. Token pobierany z outputu Terraforma po nazwie.
+cloudflared_tunnel_name: wf-cicd
+
+# Klucze IAM użytkownika wolffire-jenkins-backup (zapis do bucketa kopii, bez
+# prawa kasowania). Jedyne sekrety projektu, które NIE leżą w group_vars/all/
+# secrets.sops.yml, tylko w secrets.sops.yaml w korzeniu repozytorium - razem
+# z poświadczeniami do Proxmoxa, Cloudflare i backendu stanu Terraforma.
+#
+# Rozdzielenie jest celowe: tamten plik opisuje dostępy do zewnętrznych dostawców
+# i czyta go zarówno Terraform, jak i Ansible (przez `sops exec-env`), a
+# group_vars/all trzyma sekrety wnętrza infrastruktury. Duplikowanie kluczy
+# w obu plikach oznaczałoby dwa miejsca do rotacji tego samego sekretu.
+#
+# Wartość pusta, gdy playbook uruchomiono bez sops exec-env - rola sprawdza to
+# jawnie zadaniem `assert`, żeby błąd wyszedł przy wdrożeniu, a nie w nocy.
+jenkins_backup_aws_access_key_id: "{{ lookup('env', 'BACKUP_AWS_ACCESS_KEY_ID') }}"
+jenkins_backup_aws_secret_access_key: "{{ lookup('env', 'BACKUP_AWS_SECRET_ACCESS_KEY') }}"

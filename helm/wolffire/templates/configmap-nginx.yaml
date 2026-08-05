@@ -1,0 +1,81 @@
+# Konfiguracja nginx nadpisująca default.conf z obrazu.
+#
+# Dlaczego nadpisanie configmapą, a nie zmienną środowiskową: obraz nginx
+# kopiuje default.conf bezpośrednio do /etc/nginx/conf.d/, bez mechanizmu
+# szablonów envsubst (/etc/nginx/templates), więc env nie ma jak podmienić
+# upstreamu. Sama nazwa serwisu "php" też by nie wystarczyła: config używa
+# zmiennej w fastcgi_pass, a wtedy nginx wymaga dyrektywy resolver i pełnego
+# FQDN (resolver nginx ignoruje search domains z /etc/resolv.conf).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "wolffire.fullname" . }}-nginx
+  labels:
+    {{- include "wolffire.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    server {
+        listen 8080;
+        server_name _;
+        root /var/www/html/public;
+        index index.php;
+
+        charset utf-8;
+
+        # DNS klastra + krótki cache: zmienna w fastcgi_pass odświeża adres
+        # w trakcie działania, więc restart serwisu php nie wymaga restartu
+        # nginxa (statyczny upstream zamroziłby IP z chwili startu).
+        resolver {{ .Values.nginx.resolver }} valid=10s;
+        set $upstream {{ include "wolffire.phpServiceName" . }}.{{ .Release.Namespace }}.svc.{{ .Values.nginx.clusterDomain }}:9000;
+
+        client_max_body_size 32m;
+
+        # Logi na stdout/stderr - zbiera je środowisko uruchomieniowe kontenera.
+        access_log /dev/stdout;
+        error_log  /dev/stderr warn;
+
+        location / {
+            try_files $uri $uri/ /index.php?$query_string;
+        }
+
+        # Endpoint kondycji Laravela - poza logami, bo sondy odpytują go
+        # co kilka sekund i zaśmiecałyby je bez wartości diagnostycznej.
+        location = /up {
+            access_log off;
+            try_files $uri /index.php?$query_string;
+        }
+
+        # Metryki dla Prometheusa - wyłącznie z sieci wewnętrznej.
+        location = /metrics {
+            access_log off;
+            allow 10.0.0.0/16;
+            deny all;
+            try_files $uri /index.php?$query_string;
+        }
+
+        location ~ \.php$ {
+            fastcgi_pass $upstream;
+            fastcgi_index index.php;
+            include fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            fastcgi_param PATH_INFO $fastcgi_path_info;
+            fastcgi_read_timeout 120s;
+        }
+
+        # Zasoby statyczne serwuje nginx - ale z fallbackiem do PHP. Livewire
+        # i Flux serwują swój JavaScript przez trasy Laravela
+        # (/livewire-*/livewire.min.js, /flux/flux.min.js), które kończą się
+        # na .js, ale NIE są plikami na dysku. Bez try_files każde takie
+        # żądanie kończyło się 404 i aplikacja wstawała bez frontendu.
+        # Lustro poprawki z .docker/nginx/default.conf w repo aplikacji.
+        location ~* \.(jpg|jpeg|png|gif|ico|svg|webp|css|js|woff2?)$ {
+            expires 30d;
+            access_log off;
+            add_header Cache-Control "public, immutable";
+            try_files $uri /index.php?$query_string;
+        }
+
+        location ~ /\.(?!well-known).* {
+            deny all;
+        }
+    }

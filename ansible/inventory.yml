@@ -1,0 +1,93 @@
+# Przynależność do grup + adresy maszyn.
+#
+# ansible_host to ALIAS z ssh_config (prefiks wf-), a nie adres - dzięki temu
+# Ansible i ręczne 'ssh wf-monitoring' idą dokładnie tą samą ścieżką.
+# Nazwy hostów w inventory zostają bez prefiksu, bo trafiają do hostname maszyn
+# i do etykiet w Prometheusie.
+#
+# Adresy są tu jako DANE (szablony Prometheusa, Loki i k3s ich potrzebują), a nie
+# jako parametry połączenia - te opisuje ssh_config. Wartości odpowiadają
+# terraform/locals.tf: 10.0.<tag vnetu>.<host>.
+proxmox:
+  hosts:
+    proxmox-1:
+      ansible_host: wf-proxmox-1
+      private_ip: 57.128.192.26
+
+# Jedyny punkt wejścia: terminuje tunel Cloudflare i pośredniczy w SSH do reszty.
+bastion:
+  hosts:
+    bastion-1:
+      ansible_host: wf-bastion-1
+      private_ip: 10.0.110.10
+
+cicd:
+  hosts:
+    cicd-1:
+      ansible_host: wf-cicd-1
+      private_ip: 10.0.120.10
+
+observability:
+  hosts:
+    monitoring-1:
+      ansible_host: wf-monitoring-1
+      private_ip: 10.0.120.20
+
+k3s_server:
+  hosts:
+    k3s-server-1:
+      ansible_host: wf-k3s-server-1
+      private_ip: 10.0.130.10
+
+k3s_agent:
+  hosts:
+    k3s-agent-1:
+      ansible_host: wf-k3s-agent-1
+      private_ip: 10.0.130.11
+    k3s-agent-2:
+      ansible_host: wf-k3s-agent-2
+      private_ip: 10.0.130.12
+
+k3s:
+  children:
+    k3s_server:
+    k3s_agent:
+
+postgres:
+  hosts:
+    wolffire-prod-db-1:
+      ansible_host: wf-wolffire-prod-db-1
+      private_ip: 10.0.140.10
+
+redis:
+  hosts:
+    wolffire-prod-db-1:
+      ansible_host: wf-wolffire-prod-db-1
+
+# Maszyny, na których stawiamy Dockera i wdrażamy kontenery bezpośrednio.
+# Węzły k3s celowo poza tą grupą - tam kontenerami zarządza Kubernetes.
+docker:
+  hosts:
+    cicd-1:
+      ansible_host: wf-cicd-1
+    monitoring-1:
+      ansible_host: wf-monitoring-1
+    wolffire-dev-app-1:
+      ansible_host: wf-wolffire-dev-app-1
+
+dev:
+  hosts:
+    wolffire-dev-app-1:
+      ansible_host: wf-wolffire-dev-app-1
+      private_ip: 10.0.120.30
+
+prod:
+  hosts:
+    k3s-server-1:
+      ansible_host: wf-k3s-server-1
+    k3s-agent-1:
+      ansible_host: wf-k3s-agent-1
+    k3s-agent-2:
+      ansible_host: wf-k3s-agent-2
+    wolffire-prod-db-1:
+      ansible_host: wf-wolffire-prod-db-1

@@ -1,0 +1,26 @@
+# Hypervisor jest świadomie wyłączony z tej roli.
+#
+# Proxmox zapisuje nazwę węzła w ścieżkach /etc/pve/nodes/<nazwa>/, w konfiguracji
+# storage'u i maszyn - przemianowanie go nie jest obsługiwane. Do tego pmxcfs
+# odmawia startu, jeśli nazwa węzła rozwiązuje się na adres loopbackowy, a właśnie
+# taki wpis (127.0.1.1) dodaje poniższe zadanie. Efekt: brak /etc/pve, czyli brak
+# zarządzania maszynami.
+#
+# Nazwa hosta w inventory (proxmox-1) jest wyłącznie aliasem dla SSH i nie musi
+# odpowiadać nazwie węzła w Proxmoxie.
+- name: Ustaw hostname zgodny z nazwą w inventory
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+  when: "'proxmox' not in group_names"
+  tags: [hostname]
+
+# Bez tego wpisu sudo przy każdym wywołaniu próbuje rozwiązać nazwę hosta
+# i czeka na timeout DNS-u.
+- name: Zwiąż hostname z adresem pętli zwrotnej
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\s'
+    line: "127.0.1.1 {{ inventory_hostname }}"
+    state: present
+  when: "'proxmox' not in group_names"
+  tags: [hostname]

@@ -1,0 +1,12 @@
+public_zone: wolffire.dev
+
+ssh_port: 22022
+
+alert_channel: slack
+alert_slack_channel: "#alerts"
+
+bastion_ip: 10.0.110.10
+monitoring_ip: 10.0.120.20
+cicd_ip: 10.0.120.10
+db_ip: 10.0.140.10
+k3s_subnet: 10.0.130.0/24

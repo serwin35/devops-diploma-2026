@@ -1,0 +1,51 @@
+- name: Sprawdź zainstalowaną wersję k3s
+  ansible.builtin.command: /usr/local/bin/k3s --version
+  register: k3s_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: [k3s]
+
+# K3S_URL przełącza instalator w tryb agenta i wskazuje control plane, K3S_TOKEN
+# uwierzytelnia dołączenie do klastra.
+- name: Zainstaluj agenta i dołącz do klastra
+  ansible.builtin.command:
+    cmd: "{{ k3s_install_script_path }}"
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    INSTALL_K3S_EXEC: "agent {{ k3s_agent_args | join(' ') }}"
+    K3S_URL: "{{ k3s_server_url }}"
+    K3S_TOKEN: "{{ k3s_token }}"
+  when: k3s_force_install or k3s_version not in (k3s_installed.stdout | default(''))
+  changed_when: true
+  notify: restart k3s-agent
+  tags: [k3s]
+
+- name: Włącz usługę k3s-agent
+  ansible.builtin.systemd_service:
+    name: k3s-agent
+    state: started
+    enabled: true
+  tags: [k3s]
+
+# Sprawdzenie całego klastra siedzi po stronie agentów, a nie serwera: playbook
+# konfiguruje control plane zanim agenci w ogóle istnieją, więc dopiero tutaj
+# liczba węzłów może się zgadzać z inventory. run_once wystarczy, bo strategia
+# linear uruchamia to zadanie dopiero po instalacji na wszystkich agentach,
+# a delegate_to - bo kubectl działa tylko na control plane.
+- name: Sprawdź, czy wszystkie węzły klastra są gotowe
+  ansible.builtin.command: k3s kubectl get nodes --no-headers
+  register: k3s_nodes
+  changed_when: false
+  failed_when: false
+  retries: "{{ k3s_ready_retries }}"
+  delay: "{{ k3s_ready_delay }}"
+  until: >-
+    k3s_nodes.rc == 0 and
+    (k3s_nodes.stdout_lines | select('search', '\sReady\s') | list | length) == (groups['k3s'] | length)
+  delegate_to: "{{ groups['k3s_server'][0] }}"
+  run_once: true
+  # Weryfikacja jest odczytem, więc idzie także w --check. Inaczej zadanie
+  # zostaje pominięte, rejestr jest pusty i until/failed_when wywala przebieg.
+  check_mode: false
+  tags: [k3s]

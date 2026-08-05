@@ -1,0 +1,27 @@
+# Zarządzane przez Ansible.
+#
+# Jednostka opakowuje Docker Compose, żeby wdrożenie nie wymagało uprawnień
+# do demona Dockera. Pipeline zapisuje IMAGE_TAG do pliku .env obok compose.yml
+# i wywołuje `systemctl reload wolffire` - nic więcej.
+[Unit]
+Description=WolfFire - środowisko deweloperskie
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory={{ wolffire_dir }}
+
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose down
+
+# reload = pobierz nowe obrazy według IMAGE_TAG i podmień kontenery.
+# To jest cały mechanizm wdrożenia.
+ExecReload=/usr/bin/docker compose pull --quiet
+ExecReload=/usr/bin/docker compose up -d --remove-orphans
+
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target
