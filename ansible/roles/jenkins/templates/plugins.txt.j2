@@ -1,0 +1,7 @@
+# Zarządzane przez Ansible.
+# Lista pochodzi ze zmiennej jenkins_plugins (defaults/main.yml).
+# Zależności wtyczek dociąga jenkins-plugin-cli sam - tu wymieniamy tylko to,
+# czego używamy wprost.
+{% for plugin in jenkins_plugins %}
+{{ plugin }}
+{% endfor %}

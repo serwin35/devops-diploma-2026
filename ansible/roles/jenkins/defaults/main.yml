@@ -1,0 +1,91 @@
+jenkins_dir: /opt/jenkins
+
+# Obraz bazowy i obraz końcowy to dwie różne rzeczy: do bazowego dokładamy
+# wtyczki własnym Dockerfile (patrz templates/Dockerfile.j2), a uruchamiamy
+# już wynik tego budowania.
+#
+# Nazwa repozytorium bez tagu: tag wyliczany jest z treści Dockerfile i listy
+# wtyczek (tasks/main.yml). Stały tag `:local` oznaczał, że przebudowa podmienia
+# obraz pod działającym kontenerem - przy składzie obrazów containerd stara
+# warstwa znika natychmiast, a `docker compose images` kończy się wtedy błędem
+# "No such image" i wywraca każde kolejne zadanie docker_compose_v2.
+jenkins_base_image: jenkins/jenkins:lts-jdk21
+jenkins_image_repo: wolffire/jenkins
+
+# Agent nie może być czystym jenkins/inbound-agent: zadanie backupowe woła
+# pg_dump i restic, których ten obraz nie ma. Własny obraz (agent-Dockerfile.j2)
+# dokleja oba narzędzia do oryginału - dzięki temu zostaje oryginalny sposób
+# podłączania agenta (JNLP), a dochodzi tylko to, czego brakuje.
+jenkins_agent_base_image: jenkins/inbound-agent:latest
+jenkins_agent_image_repo: wolffire/jenkins-agent
+
+# Klient Postgresa nie może być starszy od serwera - pg_dump ze starszego
+# wydania odmawia zrzutu nowszej bazy ("server version mismatch"). Wartość
+# trzymana równo z postgres_version z roli postgres, stąd pakiet z PGDG,
+# a nie ten z Debiana (trixie wozi inną gałąź).
+jenkins_agent_pg_version: 18
+# Restic przypięty do wydania upstream zamiast pakietu dystrybucji: odtwarzanie
+# kopii testuje się raz i chce się mieć pewność, że przebudowa obrazu za pół
+# roku da to samo narzędzie, a nie nowsze o kilka zmian formatu repozytorium.
+jenkins_agent_restic_version: "0.19.1"
+
+jenkins_port: 8080
+# Port, na którym kontroler przyjmuje połączenia agentów (JNLP). Stały, bo
+# losowy wymagałby otwarcia całego zakresu portów. Celowo NIE jest publikowany
+# na hoście - agenty stoją w tej samej sieci Dockera i wchodzą od środka.
+jenkins_agent_port: 50000
+jenkins_agent_label: docker-agent
+# Limit równolegle działających kontenerów-agentów. Maszyna CI/CD ma 2 vCPU,
+# więcej agentów niż rdzeni tylko wydłuża każdy build.
+jenkins_agent_cap: 2
+# Po tylu minutach bezczynności kontener agenta jest kasowany. Efemeryczność
+# jest tu celem: każdy build startuje z czystego środowiska.
+jenkins_agent_idle_minutes: 1
+
+jenkins_admin_user: admin
+# Hasło pochodzi z group_vars/all/secrets.sops.yml (jenkins_admin_password).
+
+# Adres publiczny (tunel Cloudflare, terraform/main.tf -> module cloudflare_cicd).
+# Jenkins buduje z niego odnośniki w powiadomieniach i w konsoli agenta.
+jenkins_url: "https://jenkins.{{ public_zone }}"
+
+# Wtyczki wpiekane w obraz. Bez wersji: jenkins-plugin-cli dobiera wydania
+# zgodne z rdzeniem obrazu bazowego, a przypinanie każdej wtyczki z osobna
+# oznacza ręcznie utrzymywany graf zależności między nimi.
+jenkins_plugins:
+  # Silnik JCasC - bez niego cały jenkins.yaml jest martwym plikiem.
+  - configuration-as-code
+  # Sekcja `jobs:` w JCasC to wtyczka Job DSL. Nie ma jej na liście z zadania,
+  # ale bez niej zadanie backupowe nie powstanie.
+  - job-dsl
+  - docker-plugin
+  - docker-workflow
+  - workflow-aggregator
+  - git
+  - pipeline-stage-view
+  - credentials-binding
+
+# ── Zadanie backupowe ───────────────────────────────────────────────────────
+#
+# Parametry trzymane tutaj, a nie wklejone w pipeline: zmiana bucketa albo
+# godziny nie wymaga dotykania kodu zadania.
+jenkins_backup_job_name: infra-backup
+# Składnia Jenkinsa: H rozkłada starty w obrębie godziny, żeby wszystkie
+# zadania nie ruszyły dokładnie o 2:00.
+jenkins_backup_cron: "H 2 * * *"
+
+jenkins_backup_db_host: "{{ db_ip }}"
+jenkins_backup_db_name: wolffire
+jenkins_backup_db_user: wolffire
+
+# Bucket i region z terraform/bootstrap/variables.tf. Użytkownik IAM Jenkinsa
+# ma prawo zapisu, ale NIE kasowania - retencja to reguła cyklu życia bucketa.
+jenkins_backup_bucket: wolffire-backups
+jenkins_backup_region: eu-north-1
+jenkins_backup_restic_repo: "s3:s3.{{ jenkins_backup_region }}.amazonaws.com/{{ jenkins_backup_bucket }}"
+
+# Identyfikatory poświadczeń w Jenkinsie. Wartości wchodzą zmiennymi
+# środowiskowymi kontenera (compose.yml.j2), w jenkins.yaml zostają same nazwy.
+jenkins_cred_db: wolffire-db
+jenkins_cred_restic_s3: restic-s3
+jenkins_cred_restic_password: restic-password

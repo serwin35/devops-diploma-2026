@@ -1,0 +1,80 @@
+# Zarządzane przez Ansible.
+#
+# Kontroler Jenkinsa. Cała jego konfiguracja siedzi w jenkins.yaml (JCasC) -
+# ten plik odpowiada wyłącznie za to, jak kontener jest uruchomiony.
+name: jenkins
+
+networks:
+  # Nazwa jawna, bo odwołuje się do niej szablon agenta w jenkins.yaml.
+  # Bez `name:` Compose dokłada prefiks projektu (jenkins_jenkins) i chmura
+  # agentów próbowałaby podłączyć kontenery do nieistniejącej sieci.
+  jenkins:
+    name: jenkins
+
+volumes:
+  # JENKINS_HOME: konfiguracja zadań, historia buildów, klucz instancji i klucze
+  # do poświadczeń. Kontener jest wymienny, ten wolumen nie - po `docker compose
+  # down` i ponownym `up` instancja wraca z całą historią.
+  jenkins_home:
+
+services:
+  jenkins:
+    # Bez sekcji `build`. Obraz buduje wcześniej Ansible (docker_image_build),
+    # a Compose dostaje gotowy tag. Powód: przy budowaniu przez Compose każda
+    # przebudowa nadpisywała ten sam tag, stary obraz znikał ze składu
+    # containerd, a `docker compose images` - wołane przez moduł
+    # docker_compose_v2 przy każdym uruchomieniu - kończyło się wtedy błędem
+    # "No such image" i wywracało całą rolę.
+    image: {{ jenkins_image }}
+    container_name: jenkins
+    hostname: jenkins
+    restart: unless-stopped
+    networks: [jenkins]
+    # Nasłuch tylko na adresie prywatnym - do UI wchodzi się tunelem Cloudflare
+    # przez bastion, nie z internetu.
+    ports:
+      - "{{ private_ip }}:{{ jenkins_port }}:8080"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      # Konfiguracja poza JENKINS_HOME i tylko do odczytu: plik jest generowany
+      # przez Ansible, a Jenkins nie ma powodu go nadpisywać.
+      - ./jenkins.yaml:/var/jenkins_casc/jenkins.yaml:ro
+      # Kod zadania backupowego. Wczytuje go skrypt Job DSL z jenkins.yaml -
+      # patrz komentarz przy sekcji `jobs:` (rozdzielenie unika czterech
+      # poziomów cytowania w jednym pliku).
+      - ./backup-pipeline.groovy:/var/jenkins_casc/backup-pipeline.groovy:ro
+      # PODNIESIENIE UPRAWNIEŃ. Kto ma dostęp do gniazda Dockera, ten ma roota
+      # na maszynie - może uruchomić kontener z zamontowanym `/` i wyjść poza
+      # izolację. Akceptujemy to świadomie:
+      #  - maszyna cicd-1 jest dedykowana CI, nie dzieli jej z nią żaden inny
+      #    najemca ani żadna usługa produkcyjna,
+      #  - do UI Jenkinsa wchodzi się wyłącznie przez Cloudflare Access, a do
+      #    portu 8080 tylko z bastionu (UFW + firewall hypervisora),
+      #  - anonimowy dostęp i rejestracja są wyłączone, buildy nie chodzą na
+      #    kontrolerze (numExecutors: 0),
+      #  - alternatywa (docker-in-docker albo socket proxy) daje w praktyce tę
+      #    samą siłę ataku przy większej liczbie ruchomych części.
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Kontener działa jako użytkownik `jenkins` (uid 1000), a gniazdo Dockera
+    # należy do grupy `docker` hosta. Bez dopisania jej GID-u każde wywołanie
+    # API Dockera kończy się "permission denied" i chmura agentów nie startuje.
+    group_add:
+      - "{{ docker_gid }}"
+    environment:
+      # Ścieżka, pod którą JCasC szuka konfiguracji przy każdym starcie.
+      CASC_JENKINS_CONFIG: /var/jenkins_casc/jenkins.yaml
+      # Sekrety wchodzą tędy, a nie do jenkins.yaml - dzięki temu plik
+      # konfiguracji może być czytelny dla wszystkich i może trafić do repo,
+      # a wartości zostają w tym pliku (0600) i w SOPS-ie. JCasC podstawia je
+      # pod ${NAZWA} przy starcie.
+      JENKINS_ADMIN_PASSWORD: "{{ jenkins_admin_password }}"
+      # Poświadczenia zadania backupowego. Trafiają do magazynu poświadczeń
+      # Jenkinsa (sekcja credentials w jenkins.yaml), a nie do definicji zadania -
+      # w konsoli builda są maskowane.
+      WOLFFIRE_DB_PASSWORD: "{{ wolffire_db_password }}"
+      RESTIC_PASSWORD: "{{ restic_password }}"
+      BACKUP_AWS_ACCESS_KEY_ID: "{{ jenkins_backup_aws_access_key_id }}"
+      BACKUP_AWS_SECRET_ACCESS_KEY: "{{ jenkins_backup_aws_secret_access_key }}"
+      # Kreator startowy jest zbędny: użytkownik, uprawnienia i wtyczki są już
+      # ustawione z kodu. Zostawiony blokowałby dostęp ekranem "Unlock Jenkins".
+      JAVA_OPTS: -Djenkins.install.runSetupWizard=false

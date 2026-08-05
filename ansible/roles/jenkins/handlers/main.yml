@@ -1,0 +1,11 @@
+# Nie ma tu handlera przebudowującego obraz. Obrazy mają tag liczony z treści
+# Dockerfile i listy wtyczek (tasks/main.yml), więc zmiana któregokolwiek z tych
+# plików zmienia tag, a wtedy Compose sam widzi rozbieżność i podmienia kontener.
+# Handler od przebudowy byłby drugim, równoległym mechanizmem robiącym to samo.
+
+# Konfiguracja JCasC jest czytana wyłącznie przy starcie procesu - podmiana
+# pliku jenkins.yaml albo kodu zadania bez restartu niczego nie zmienia.
+- name: restart jenkins
+  community.docker.docker_compose_v2:
+    project_src: "{{ jenkins_dir }}"
+    state: restarted

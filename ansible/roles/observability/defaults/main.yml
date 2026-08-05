@@ -1,0 +1,4 @@
+# Eksportery nasłuchują na adresie prywatnym maszyny, nie na 0.0.0.0.
+# Firewall hypervisora i tak dopuszcza te porty wyłącznie z adresu Prometheusa,
+# ale zawężenie bindowania to druga warstwa tej samej zasady.
+node_exporter_port: 9100
