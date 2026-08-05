@@ -26,40 +26,42 @@ $ # commity pasujące do wzorca feat/fix/chore/ci/docs/refactor/test/perf/build/
 161 / 308
 ```
 
-### Zastrzeżenie 1 - repozytorium infrastruktury ma tylko 4 commity, reszta pracy jest niescommitowana
+### Zastrzeżenie 1 (ROZWIĄZANE 2026-08-05) - historia repozytorium infrastruktury
+
+W chwili pierwszego zbierania dowodów repozytorium miało tylko 4 commity,
+a cały dorobek (Terraform, Ansible, Helm, skrypty, dokumentacja) leżał
+niescommitowany w katalogu roboczym. Przed obroną praca została pokrojona
+na 15 commitów odzwierciedlających naturalną kolejność budowy projektu
+i scalona do `main` przez pull request nr 1 (gałąź `develop` -> `main`,
+ten sam przepływ co w repozytorium aplikacji):
 
 ```
-$ git log --oneline
-d6ac206 feat(secrets): manage tokens with SOPS and age
-a54cdfe chore: ignore terraform state, secrets and generated files
-77b8786 Add initial project documentation and .gitignore file
-b913719 first commit
-
-$ git status --short | head
- M README.md
-?? .sops.yaml
-?? Makefile
-?? ansible/
-?? docs/ARCHITECTURE.md
-?? docs/PLAN.md
-?? docs/RUNBOOK.md
-?? helm/
-?? keys/
-?? scripts/
-?? secrets.sops.yaml
-?? terraform/
+$ git log --oneline --graph main
+*   bb2cf5c Merge pull request #1 from serwin35/develop
+|\  
+| * 93f9b84 Write documentation: architecture, runbook, command guides and evidence
+| * 52df520 Add public SSH keys with usage notes
+| * 5741eb3 Add dev-to-prod database sync script
+| * b295886 Add read-only infrastructure smoke tests
+| * a4bbc1e Configure Jenkins via JCasC with restic backup pipeline to S3
+| * 4356d9e Stand up monitoring: Prometheus, Grafana, Loki, Alertmanager with dual alert channels
+| * d14b480 Add Helm chart for WolfFire (php, nginx, horizon, scheduler, migrate job)
+| * 536f92b Deploy k3s cluster and WolfFire application roles
+| * 6bfe815 Install PostgreSQL and Redis with exporters
+| * afcf326 Set up Ansible inventory, SSH config and base hardening roles
+| * 75d5d70 Wire Cloudflare: per-machine tunnels, Zero Trust access and DNS no-mail policy
+| * 9ea7dd4 Define service VMs: bastion, cicd, observability, wolffire dev and prod
+| * 8913385 Provision Proxmox base: SDN network, storage, cloud-init and firewall groups
+| * 2ccd421 Bootstrap AWS: state and backup buckets, IAM identities, SNS alerts topic
+| * cd482da Add Makefile and SOPS-encrypted provider secrets
+|/  
+* d6ac206 feat(secrets): manage tokens with SOPS and age
+* a54cdfe chore: ignore terraform state, secrets and generated files
 ```
 
-Innymi słowy: **cały Terraform, cały Ansible, cały Helm, Makefile,
-ARCHITECTURE/PLAN/RUNBOOK i skrypty testów dymnych - wszystko widoczne w tym
-katalogu roboczym i realnie działające na żywej infrastrukturze - leży poza
-historią gita**, jako niescommitowane pliki. Repozytorium na GitHub
-(`serwin35/devops-diploma-2026`) połączenie ma i działa (`git fetch`/`push`
-przechodzą), ale odzwierciedla tylko wczesny etap projektu (bootstrap SOPS),
-nie stan faktyczny opisany w pozostałych dowodach tego katalogu.
-
-To jest największy pojedynczy brak w całym zestawie dowodów - do obrony
-wymaga zacommitowania i wypchnięcia całej pracy z tego katalogu roboczego.
+Sekrety pozostały bezpieczne: do repozytorium weszły wyłącznie pliki
+zaszyfrowane SOPS (`ENC[AES256_GCM...]`) i klucze publiczne SSH -
+prywatne odfiltrował `.gitignore`.
 
 ### Zastrzeżenie 2 - `WF-ChartApp-diploma` nie jest technicznym forkiem na GitHubie
 
@@ -104,6 +106,6 @@ znaczenie czysto formalne dla tego podkryterium.
 ## Zrzuty ekranu
 
 ![Historia commitów WF-ChartApp-diploma na GitHubie - 308 commitów, Conventional Commits](../zrzuty/git-app-commit-history.png)
-![git log --oneline repozytorium infrastruktury - 4 commity (do uzupełnienia przed obroną)](../zrzuty/git-infra-log.png)
+![git log --oneline --graph repozytorium infrastruktury po scaleniu PR nr 1](../zrzuty/git-infra-log.png)
 
 Related evidence: [dokumentacja.md](dokumentacja.md), [ci.md](ci.md).

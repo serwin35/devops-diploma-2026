@@ -51,10 +51,8 @@ Kolejność odpowiada w przybliżeniu wadze kryterium (od najważniejszych).
 - **git-app-commit-history.png** [✅ ZEBRANE] - GitHub, `WF-ChartApp-diploma` -> zakładka
   commitów na `main`, widoczna liczba commitów (308) i kilka wiadomości w
   stylu Conventional Commits.
-- **git-infra-log.png** - terminal, `git log --oneline --graph` w repo
-  infrastruktury. **Zrób ten zrzut DOPIERO PO** zacommitowaniu i wypchnięciu
-  pracy opisanej w `git-github.md` (obecnie tylko 4 commity) - inaczej zrzut
-  ujawni ten sam brak, który dokument już opisuje.
+- **git-infra-log.png** [✅ ZEBRANE - historia po scaleniu PR nr 1: 15 commitów
+  develop -> merge do main]
 
 ## Dokumentacja (waga 2)
 
@@ -161,4 +159,3 @@ Brakujące (wymagają Twojego działania):
 3. kubernetes-*/vm-qm-list/docker-*/firewall-ufw/ansible-check-diff/testy-smoke - zrzuty terminala, komendy w plikach dowodowych
 4. domena-ssl-access-login.png - okno incognito -> grafana.wolffire.dev
 5. domena-ssl-certificate.png - kłódka w pasku adresu (dialog przeglądarki, ręcznie)
-6. git-infra-log.png - po commicie i pushu repo infra
