@@ -1,0 +1,44 @@
+# Scheduler - harmonogram Laravela. schedule:work odpala cykl co minutę
+# w pętli, więc nie potrzeba CronJoba ani crona w kontenerze.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wolffire.fullname" . }}-scheduler
+  labels:
+    {{- include "wolffire.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler
+spec:
+  replicas: {{ .Values.scheduler.replicaCount }}
+  # Recreate: dwa schedulery działające równolegle (nawet przez chwilę
+  # rolloutu) wykonałyby każde zadanie podwójnie.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "wolffire.selectorLabels" (dict "ctx" . "component" "scheduler") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "wolffire.selectorLabels" (dict "ctx" . "component" "scheduler") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include "wolffire.configEnv" . | sha256sum }}
+        checksum/secret: {{ include "wolffire.secretEnv" . | sha256sum }}
+    spec:
+      imagePullSecrets:
+        - name: {{ include "wolffire.fullname" . }}-ghcr
+      securityContext:
+        {{- include "wolffire.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: scheduler
+          image: {{ include "wolffire.phpImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["php", "artisan", "schedule:work"]
+          securityContext:
+            {{- include "wolffire.containerSecurityContext" . | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "wolffire.fullname" . }}-env
+            - secretRef:
+                name: {{ include "wolffire.fullname" . }}-env
+          resources:
+            {{- toYaml .Values.scheduler.resources | nindent 12 }}

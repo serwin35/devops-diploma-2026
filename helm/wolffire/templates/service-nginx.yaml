@@ -1,0 +1,18 @@
+# Serwis nginx - cel Ingressu. Port 80 na zewnątrz serwisu, w kontenerze
+# 8080, bo obraz działa bez roota i nie może otworzyć portu uprzywilejowanego.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "wolffire.fullname" . }}-nginx
+  labels:
+    {{- include "wolffire.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nginx
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "wolffire.selectorLabels" (dict "ctx" . "component" "nginx") | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

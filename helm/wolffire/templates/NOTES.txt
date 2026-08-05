@@ -1,0 +1,18 @@
+WolfFire zainstalowany jako release {{ .Release.Name }} w namespace {{ .Release.Namespace }}.
+
+Aplikacja: http://{{ .Values.ingress.host }} (ingress class: {{ .Values.ingress.className }})
+
+Komponenty:
+  - php ({{ .Values.php.replicaCount }} repliki), nginx ({{ .Values.nginx.replicaCount }} repliki)
+  - horizon (kolejki), scheduler (harmonogram)
+  - migracje: Job hookowy pre-install/pre-upgrade
+
+Stan release'u:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Pamiętaj: przy każdej instalacji i aktualizacji trzeba podać sekrety
+(ghcrUsername, ghcrToken, app.key, db.password, redis.password),
+np. przez -f values-secrets.yaml lub --set.
+
+Ograniczenie dema: storage/app to emptyDir per pod - uploady nie są
+współdzielone między replikami php. Produkcyjnie: app.filesystemDisk=s3.

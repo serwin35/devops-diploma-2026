@@ -1,0 +1,10 @@
+# Pliki, które nie mają trafić do pakietu chartu.
+.DS_Store
+.git/
+.gitignore
+*.swp
+*.tmp
+*~
+# Auto-generowane przez claude-mem - nie jest szablonem i psuje helm lint.
+CLAUDE.md
+templates/CLAUDE.md

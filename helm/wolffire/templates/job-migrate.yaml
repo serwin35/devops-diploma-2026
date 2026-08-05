@@ -1,0 +1,99 @@
+# Migracje bazy jako hook przed instalacją i aktualizacją.
+#
+# Hooki startują ZANIM helm utworzy zwykłe zasoby release'u, więc Job nie
+# może korzystać z głównej ConfigMapy ani Secretu - przy pierwszym incie
+# jeszcze ich nie ma, a przy upgrade zawierałyby stare wartości. Dlatego
+# dostaje własne kopie hookowe (niższa hook-weight = powstają pierwsze),
+# renderowane z tych samych helperów co główne obiekty - zero dryfu.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "wolffire.fullname" . }}-migrate-env
+  labels:
+    {{- include "wolffire.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-1"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+  {{- include "wolffire.configEnv" . | nindent 2 }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "wolffire.fullname" . }}-migrate-env
+  labels:
+    {{- include "wolffire.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-1"
+    helm.sh/hook-delete-policy: before-hook-creation
+type: Opaque
+stringData:
+  {{- include "wolffire.secretEnv" . | nindent 2 }}
+---
+# Kopia pull secreta: przy pierwszym incie główny secret GHCR jeszcze
+# nie istnieje, a bez niego kubelet nie pobierze obrazu dla hooka.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "wolffire.fullname" . }}-migrate-ghcr
+  labels:
+    {{- include "wolffire.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-1"
+    helm.sh/hook-delete-policy: before-hook-creation
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: {{ include "wolffire.imagePullSecretData" . }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "wolffire.fullname" . }}-migrate
+  labels:
+    {{- include "wolffire.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    # before-hook-creation: nieudany Job zostaje do debugowania i sprząta
+    # się dopiero przy następnej próbie; hook-succeeded: udany znika od razu.
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  # Migracja, która padła, nie naprawi się sama od ponawiania - lepiej
+  # szybko przerwać upgrade i zostawić czytelny błąd.
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        {{- include "wolffire.selectorLabels" (dict "ctx" . "component" "migrate") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: {{ include "wolffire.fullname" . }}-migrate-ghcr
+      securityContext:
+        {{- include "wolffire.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "wolffire.phpImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["php", "artisan", "migrate", "--force"]
+          securityContext:
+            {{- include "wolffire.containerSecurityContext" . | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "wolffire.fullname" . }}-migrate-env
+            - secretRef:
+                name: {{ include "wolffire.fullname" . }}-migrate-env
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi

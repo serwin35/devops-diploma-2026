@@ -1,0 +1,50 @@
+# Horizon - przetwarzanie kolejek Redis. Ten sam obraz co php, inna komenda.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wolffire.fullname" . }}-horizon
+  labels:
+    {{- include "wolffire.labels" . | nindent 4 }}
+    app.kubernetes.io/component: horizon
+spec:
+  replicas: {{ .Values.horizon.replicaCount }}
+  # Recreate zamiast RollingUpdate: dwie wersje Horizona przetwarzające
+  # te same kolejki w trakcie rolloutu to prosty przepis na joby wykonane
+  # na starym kodzie tuż po migracji bazy.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "wolffire.selectorLabels" (dict "ctx" . "component" "horizon") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "wolffire.selectorLabels" (dict "ctx" . "component" "horizon") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include "wolffire.configEnv" . | sha256sum }}
+        checksum/secret: {{ include "wolffire.secretEnv" . | sha256sum }}
+    spec:
+      imagePullSecrets:
+        - name: {{ include "wolffire.fullname" . }}-ghcr
+      # Horizon po SIGTERM kończy bieżące joby, zanim się wyłączy - domyślne
+      # 30 s może nie starczyć i job zostałby ubity w połowie.
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        {{- include "wolffire.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: horizon
+          image: {{ include "wolffire.phpImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["php", "artisan", "horizon"]
+          securityContext:
+            {{- include "wolffire.containerSecurityContext" . | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "wolffire.fullname" . }}-env
+            - secretRef:
+                name: {{ include "wolffire.fullname" . }}-env
+          # Bez sond: horizon:status łączy się z Redisem przy każdym strzale,
+          # a padnięty proces i tak kończy kontener - restartPolicy załatwia
+          # wznowienie taniej niż sonda.
+          resources:
+            {{- toYaml .Values.horizon.resources | nindent 12 }}

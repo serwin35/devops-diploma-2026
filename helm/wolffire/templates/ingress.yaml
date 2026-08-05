@@ -1,0 +1,26 @@
+{{- if .Values.ingress.enabled }}
+# Ruch z zewnątrz wchodzi przez Traefika wbudowanego w k3s.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "wolffire.fullname" . }}
+  labels:
+    {{- include "wolffire.labels" . | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "wolffire.fullname" . }}-nginx
+                port:
+                  name: http
+{{- end }}

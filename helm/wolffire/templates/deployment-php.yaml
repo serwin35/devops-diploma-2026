@@ -1,0 +1,67 @@
+# php-fpm - obsługa żądań HTTP przekazywanych przez nginx.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wolffire.fullname" . }}-php
+  labels:
+    {{- include "wolffire.labels" . | nindent 4 }}
+    app.kubernetes.io/component: php
+spec:
+  replicas: {{ .Values.php.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "wolffire.selectorLabels" (dict "ctx" . "component" "php") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "wolffire.selectorLabels" (dict "ctx" . "component" "php") | nindent 8 }}
+      annotations:
+        # Zmiana configu albo sekretu musi wymusić rollout - envFrom nie jest
+        # śledzone przez Kubernetes, więc bez checksumy pody działałyby
+        # ze starą konfiguracją aż do przypadkowego restartu.
+        checksum/config: {{ include "wolffire.configEnv" . | sha256sum }}
+        checksum/secret: {{ include "wolffire.secretEnv" . | sha256sum }}
+    spec:
+      imagePullSecrets:
+        - name: {{ include "wolffire.fullname" . }}-ghcr
+      securityContext:
+        {{- include "wolffire.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: php
+          image: {{ include "wolffire.phpImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- include "wolffire.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - name: fpm
+              containerPort: 9000
+          envFrom:
+            - configMapRef:
+                name: {{ include "wolffire.fullname" . }}-env
+            - secretRef:
+                name: {{ include "wolffire.fullname" . }}-env
+          # Sondy TCP na porcie fpm: odróżniają "proces przyjmuje połączenia"
+          # od "aplikacja odpowiada" - to drugie sprawdza sonda /up w nginx.
+          readinessProbe:
+            tcpSocket:
+              port: fpm
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: fpm
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.php.resources | nindent 12 }}
+          volumeMounts:
+            - name: storage-app
+              mountPath: /var/www/html/storage/app
+      volumes:
+        # ŚWIADOME OGRANICZENIE DEMA: emptyDir jest per pod, więc uploady
+        # nie są współdzielone między replikami i giną przy restarcie poda.
+        # Przy >1 replice php produkcyjnie trzeba przejść na storage
+        # obiektowy (app.filesystemDisk=s3 + konfiguracja S3), bo k3s w tym
+        # układzie nie oferuje wolumenów RWX.
+        - name: storage-app
+          emptyDir: {}
