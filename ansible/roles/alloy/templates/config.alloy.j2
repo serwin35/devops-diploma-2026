@@ -1,0 +1,75 @@
+// Zarządzane przez Ansible.
+//
+// Zbiera dwa źródła logów i wysyła je do Loki:
+//   1. journald - logi systemowe i wszystkich usług systemd
+//   2. kontenery Dockera - tam, gdzie Docker jest zainstalowany
+//
+// Etykiety są celowo skromne: host, job, unit/container. Każda etykieta tworzy
+// w Loki osobny strumień, a nadmiar etykiet o dużej liczności (np. request_id)
+// rozsadza indeks.
+
+loki.write "default" {
+  endpoint {
+    url = "{{ loki_push_url }}"
+  }
+}
+
+// ── Logi systemowe ───────────────────────────────────────────────────────────
+loki.source.journal "journal" {
+  forward_to    = [loki.write.default.receiver]
+  max_age       = "12h"
+  relabel_rules = discovery.relabel.journal.rules
+  labels        = {
+    job  = "systemd-journal",
+    host = "{{ inventory_hostname }}",
+  }
+}
+
+discovery.relabel "journal" {
+  targets = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    target_label  = "level"
+  }
+}
+
+{% if 'docker' in group_names %}
+// ── Logi kontenerów ──────────────────────────────────────────────────────────
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "15s"
+}
+
+discovery.relabel "containers" {
+  targets = []
+
+  // Nazwa kontenera przychodzi z wiodącym ukośnikiem - obcinamy go.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_log_stream"]
+    target_label  = "stream"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.containers.targets
+  forward_to    = [loki.write.default.receiver]
+  relabel_rules = discovery.relabel.containers.rules
+  labels        = {
+    job  = "docker",
+    host = "{{ inventory_hostname }}",
+  }
+}
+{% endif %}

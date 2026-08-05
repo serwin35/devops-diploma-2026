@@ -1,0 +1,4 @@
+# Agent zbierający logi i wysyłający je do Loki.
+# Instalowany jako pakiet, nie kontener - musi czytać journald hosta i logi
+# kontenerów, a to prościej z poziomu systemu niż z wnętrza kontenera.
+loki_push_url: "http://{{ monitoring_ip }}:3100/loki/api/v1/push"

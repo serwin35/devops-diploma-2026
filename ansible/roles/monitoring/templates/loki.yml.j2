@@ -1,0 +1,42 @@
+# Zarządzane przez Ansible.
+# Konfiguracja jednowęzłowa: chunki na dysku lokalnym, bez klastra i bez S3.
+# Przy tej skali (osiem maszyn) rozproszony Loki byłby czystą złożonością.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: {{ loki_retention_period | default('168h') }}
+  # Loki domyślnie odrzuca wpisy starsze niż godzina - przy zbieraniu logów
+  # z systemd po restarcie agenta to za mało.
+  reject_old_samples: true
+  reject_old_samples_max_age: 24h
+
+compactor:
+  working_directory: /loki/compactor
+  delete_request_store: filesystem
+  retention_enabled: true

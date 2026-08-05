@@ -1,0 +1,35 @@
+# Prometheus i Alertmanager przeładowują konfigurację bez restartu - szereg
+# czasowy zostaje w pamięci, nie ma dziury w metrykach.
+- name: reload monitoring
+  ansible.builtin.uri:
+    url: "http://{{ private_ip }}:{{ item }}/-/reload"
+    method: POST
+    status_code: [200, 404]
+  loop:
+    - "{{ prometheus_port }}"
+    - "{{ alertmanager_port }}"
+  failed_when: false
+
+# Sama Grafana, bez ruszania reszty stosu. Zmiana dashboardu nie ma powodu
+# restartować Prometheusa: restart zeruje zegary klauzuli `for`, więc alerty
+# z `for: 20m` zaczynają odliczanie od nowa i przez ten czas realna awaria
+# nie wywoła powiadomienia. Dashboard to plik dla Grafany i tylko ona
+# potrzebuje o nim wiedzieć.
+- name: restart grafana
+  community.docker.docker_compose_v2:
+    project_src: "{{ monitoring_dir }}"
+    services: [grafana]
+    state: restarted
+
+# calert nie ma endpointu przeładowania - jedyną drogą do podmiany szablonu
+# wiadomości jest restart samego kontenera.
+- name: restart calert
+  community.docker.docker_compose_v2:
+    project_src: "{{ monitoring_dir }}"
+    services: [calert]
+    state: restarted
+
+- name: restart monitoring
+  community.docker.docker_compose_v2:
+    project_src: "{{ monitoring_dir }}"
+    state: restarted

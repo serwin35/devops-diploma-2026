@@ -1,0 +1,209 @@
+{
+  "title": "WolfFire - przegląd infrastruktury",
+  "uid": "wolffire-overview",
+  "tags": ["wolffire", "przeglad"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "label": "Maszyna",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(up{job=\"node\"}, instance)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Maszyny odpowiadające",
+      "description": "Liczba hostów, z których Prometheus zbiera metryki. Spadek poniżej 9 oznacza, że któraś maszyna nie odpowiada.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "targets": [{ "expr": "count(up{job=\"node\"} == 1)", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 7 },
+              { "color": "green", "value": 9 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Cele Prometheusa",
+      "description": "Wszystkie zbierane endpointy: node_exporter, cAdvisor, demon Dockera, bazy, aplikacja.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "targets": [{ "expr": "count(up == 1)", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" } } }
+    },
+    {
+      "type": "stat",
+      "title": "Aktywne alerty",
+      "description": "Alerty w stanie firing, bez Watchdoga - ten firuje z założenia i liczony razem z resztą trzymałby kafelek na czerwono bez przerwy. Zero to stan pożądany.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "targets": [{ "expr": "sum(ALERTS{alertstate=\"firing\", alertname!=\"Watchdog\"}) or vector(0)", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Watchdog żyje",
+      "description": "Dead-man's switch potoku alertowania. Reguła Watchdog (expr: vector(1)) firuje nieprzerwanie, więc zielony kafelek oznacza, że Prometheus ewaluuje reguły i alerty docierają do Alertmanagera. Czerwony - czyli wartość 0 lub brak serii - znaczy, że potok alertowania jest martwy: żaden inny alert też nie dojdzie. Sam Watchdog nigdy nie idzie na Google Chat (receiver \"null\"). sum() jest konieczny: samo ALERTS{...} or vector(0) zwraca dwie serie naraz (etykietowaną i pustą) i kafelek pokazywałby jednocześnie 1 i 0.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(ALERTS{alertname=\"Watchdog\",alertstate=\"firing\"}) or vector(0)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "potok alertowania martwy",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": { "text": "żyje", "color": "green", "index": 0 },
+                "0": { "text": "potok alertowania martwy", "color": "red", "index": 1 }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Działające kontenery",
+      "description": "Suma kontenerów na maszynach z Dockerem: CI/CD, monitoring, środowisko dev.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "targets": [{ "expr": "count(container_last_seen{name!=\"\"}) or vector(0)", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Pamięć zajęta łącznie",
+      "description": "Suma zużycia RAM wszystkich maszyn. Przydział to 25 GB z 31 GB fizycznych.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "targets": [{
+        "expr": "sum(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Zużycie CPU",
+      "description": "Procent czasu poza stanem idle, uśredniony po rdzeniach.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [{
+        "expr": "100 - (avg by(instance) (rate(node_cpu_seconds_total{mode=\"idle\", instance=~\"$instance\"}[5m])) * 100)",
+        "legendFormat": "{{ '{{instance}}' }}",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Zużycie pamięci",
+      "description": "Procent zajętej pamięci. Powyżej 92% przez 15 minut odzywa się alert.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [{
+        "expr": "(1 - node_memory_MemAvailable_bytes{instance=~\"$instance\"} / node_memory_MemTotal_bytes{instance=~\"$instance\"}) * 100",
+        "legendFormat": "{{ '{{instance}}' }}",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Wolne miejsce na dysku",
+      "description": "Alert ostrzegawczy poniżej 15%, krytyczny poniżej 5%.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [{
+        "expr": "node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay\", instance=~\"$instance\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay\", instance=~\"$instance\"} * 100",
+        "legendFormat": "{{ '{{instance}}' }} {{ '{{mountpoint}}' }}",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Ruch sieciowy",
+      "description": "Odebrane i wysłane bajty na sekundę.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        {
+          "expr": "rate(node_network_receive_bytes_total{device!~\"lo|veth.*|docker.*|br-.*\", instance=~\"$instance\"}[5m])",
+          "legendFormat": "{{ '{{instance}}' }} ↓",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(node_network_transmit_bytes_total{device!~\"lo|veth.*|docker.*|br-.*\", instance=~\"$instance\"}[5m])",
+          "legendFormat": "{{ '{{instance}}' }} ↑",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Pamięć kontenerów",
+      "description": "Zużycie RAM w rozbiciu na kontenery - dane z cAdvisora.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "targets": [{
+        "expr": "container_memory_usage_bytes{name!=\"\"}",
+        "legendFormat": "{{ '{{instance}}' }} / {{ '{{name}}' }}",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    }
+  ]
+}

@@ -1,0 +1,108 @@
+# Zarządzane przez Ansible.
+#
+# Stos monitoringu stoi poza klastrem k3s celowo: monitoring padający razem
+# z monitorowaną infrastrukturą nie zaalarmuje o jej padnięciu.
+#
+# Własna sieć i nazwane wolumeny są tu świadomie - to one przechowują szereg
+# czasowy Prometheusa, dashboardy Grafany i chunki Loki. Kontenery można
+# odtworzyć, danych nie.
+name: monitoring
+
+networks:
+  monitoring:
+    driver: bridge
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+  loki_data:
+
+services:
+  prometheus:
+    image: {{ prometheus_image }}
+    container_name: prometheus
+    restart: unless-stopped
+    networks: [monitoring]
+    # Nasłuch tylko na adresie prywatnym - tunel Cloudflare i tak wchodzi
+    # z bastionu, a nie z zewnątrz.
+    ports:
+      - "{{ private_ip }}:{{ prometheus_port }}:9090"
+    volumes:
+      # Katalog, nie pojedyncze pliki. Bind mount pliku przypina się do inode'a,
+      # a moduł template Ansible'a zapisuje atomowo przez rename() - kontener
+      # widziałby starą treść do końca życia, a reload przeładowywałby właśnie ją.
+      - ./prometheus/:/etc/prometheus/:ro
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time={{ prometheus_retention_time }}
+      - --storage.tsdb.retention.size={{ prometheus_retention_size }}
+      - --web.enable-lifecycle
+      - --web.external-url=https://prometheus.{{ public_zone }}
+
+  alertmanager:
+    image: {{ alertmanager_image }}
+    container_name: alertmanager
+    restart: unless-stopped
+    networks: [monitoring]
+    ports:
+      - "{{ private_ip }}:{{ alertmanager_port }}:9093"
+    volumes:
+      - ./alertmanager/:/etc/alertmanager/:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      # Bez tego Alertmanager buduje odnośniki na podstawie adresu wewnętrznego
+      # i przekierowuje przeglądarkę na 10.0.120.20 - nieosiągalny z internetu.
+      - --web.external-url=https://alerts.{{ public_zone }}
+
+  # Tłumaczy webhook Alertmanagera na format wiadomości Google Chat.
+  calert:
+    image: {{ calert_image }}
+    container_name: calert
+    restart: unless-stopped
+    networks: [monitoring]
+    volumes:
+      - ./calert/:/app/config/:ro
+    command: ["--config", "/app/config/config.toml"]
+
+  loki:
+    image: {{ loki_image }}
+    container_name: loki
+    restart: unless-stopped
+    networks: [monitoring]
+    ports:
+      - "{{ private_ip }}:{{ loki_port }}:3100"
+    volumes:
+      - ./loki/:/etc/loki/:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/loki.yml
+
+  grafana:
+    image: {{ grafana_image }}
+    container_name: grafana
+    restart: unless-stopped
+    networks: [monitoring]
+    ports:
+      - "{{ private_ip }}:{{ grafana_port }}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      # Provider (SKĄD brać dashboardy) i same pliki JSON w osobnych katalogach -
+      # inaczej Grafana próbuje sparsować plik providera jako dashboard.
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards-provider:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards-json:ro
+    environment:
+      GF_SECURITY_ADMIN_USER: {{ grafana_admin_user }}
+      GF_SECURITY_ADMIN_PASSWORD: {{ grafana_admin_password }}
+      # Anonimowy dostęp wyłączony - przed Grafaną stoi jeszcze Zero Trust Access,
+      # ale druga warstwa uwierzytelnienia kosztuje tu zero.
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: https://grafana.{{ public_zone }}
+    depends_on:
+      - prometheus
+      - loki

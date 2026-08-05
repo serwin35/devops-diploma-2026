@@ -1,0 +1,387 @@
+{
+  "title": "WolfFire - bazy danych",
+  "uid": "wolffire-database",
+  "tags": ["wolffire", "bazy", "postgres", "redis"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "db",
+        "label": "Maszyna bazodanowa",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(pg_up, instance)",
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false,
+        "current": { "text": "wolffire-prod-db-1", "value": "wolffire-prod-db-1" }
+      },
+      {
+        "name": "baza",
+        "label": "Baza",
+        "description": "Nazwa bazy z pg_stat_database. template0 i template1 są pomijane - to szablony, nie dane aplikacji.",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(pg_database_size_bytes{instance=~\"$db\", datname!~\"template.*\"}, datname)",
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false,
+        "current": { "text": "wolffire", "value": "wolffire" }
+      }
+    ]
+  },
+  "panels": [
+    { "type": "row", "title": "PostgreSQL", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "collapsed": false, "panels": [] },
+    {
+      "type": "stat",
+      "title": "Postgres odpowiada",
+      "description": "pg_up = 1 oznacza, że eksporter nawiązał połączenie z bazą. Zero to albo padnięta baza, albo zerwane uprawnienia użytkownika monitorującego.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "targets": [{ "expr": "pg_up{instance=~\"$db\"}", "refId": "A" }],
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{ "type": "value", "options": { "1": { "text": "OK", "color": "green", "index": 0 }, "0": { "text": "NIE ŻYJE", "color": "red", "index": 1 } } }],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Rozmiar bazy $baza",
+      "description": "Rozmiar na dysku razem z indeksami. Skok bez wdrożenia oznacza zwykle rozrost tabeli kolejek albo sesji.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "targets": [{ "expr": "pg_database_size_bytes{instance=~\"$db\", datname=\"$baza\"}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    },
+    {
+      "type": "stat",
+      "title": "Cache hit ratio",
+      "description": "Udział odczytów obsłużonych z shared_buffers, liczony od ostatniego resetu statystyk. Poniżej 95% baza czyta z dysku częściej, niż powinna - zwykle brakuje indeksu albo pamięci.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "targets": [{
+        "expr": "pg_stat_database_blks_hit{instance=~\"$db\", datname=\"$baza\"} / clamp_min(pg_stat_database_blks_hit{instance=~\"$db\", datname=\"$baza\"} + pg_stat_database_blks_read{instance=~\"$db\", datname=\"$baza\"}, 1)",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 0.9 }, { "color": "green", "value": 0.95 }] }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Połączenia aktywne",
+      "description": "Backendy w stanie active, czyli wykonujące w tej chwili zapytanie.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "targets": [{ "expr": "sum(pg_stat_activity_count{instance=~\"$db\", state=\"active\"})", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Wykorzystanie puli połączeń",
+      "description": "Suma wszystkich backendów wobec max_connections. Powyżej 80% aplikacja zacznie dostawać odmowy połączenia - to moment na pgbouncera, nie na podnoszenie limitu.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "targets": [{
+        "expr": "sum(pg_stat_activity_count{instance=~\"$db\"}) / max(pg_settings_max_connections{instance=~\"$db\"}) * 100",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 70 }, { "color": "red", "value": 85 }] }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Najdłuższa transakcja",
+      "description": "Czas trwania najstarszej otwartej transakcji. Długo otwarta transakcja blokuje autovacuum i po cichu rozdyma bazę.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "targets": [{ "expr": "max(pg_stat_activity_max_tx_duration{instance=~\"$db\"})", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 60 }, { "color": "red", "value": 300 }] }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Połączenia wg stanu a limit",
+      "description": "Rozbicie backendów na stany. Rosnąca liczba 'idle in transaction' to najczęstsza przyczyna wyczerpania puli.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "targets": [
+        {
+          "expr": "sum by (state) (pg_stat_activity_count{instance=~\"$db\", state!=\"\"})",
+          "legendFormat": "{{ '{{state}}' }}",
+          "refId": "A"
+        },
+        {
+          "expr": "max(pg_settings_max_connections{instance=~\"$db\"})",
+          "legendFormat": "limit (max_connections)",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "fillOpacity": 10 } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "limit (max_connections)" }, "properties": [
+            { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } },
+            { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+            { "id": "custom.fillOpacity", "value": 0 }
+          ]}
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Transakcje na sekundę",
+      "description": "Zatwierdzone i wycofane osobno. Stały udział rollbacków oznacza błędy aplikacji, a nie obciążenie.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_database_xact_commit{instance=~\"$db\", datname=\"$baza\"}[5m])",
+          "legendFormat": "commit",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(pg_stat_database_xact_rollback{instance=~\"$db\", datname=\"$baza\"}[5m])",
+          "legendFormat": "rollback",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "fillOpacity": 10 } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "rollback" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] },
+          { "matcher": { "id": "byName", "options": "commit" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache hit ratio - bieżący",
+      "description": "Liczony z przyrostów w oknie 5 minut, więc pokazuje bieżące zachowanie, a nie średnią od uruchomienia bazy. Przy zerowym ruchu panel jest pusty - nie ma z czego liczyć proporcji.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 13 },
+      "targets": [{
+        "expr": "rate(pg_stat_database_blks_hit{instance=~\"$db\", datname=\"$baza\"}[5m]) / clamp_min(rate(pg_stat_database_blks_hit{instance=~\"$db\", datname=\"$baza\"}[5m]) + rate(pg_stat_database_blks_read{instance=~\"$db\", datname=\"$baza\"}[5m]), 0.001)",
+        "legendFormat": "hit ratio",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Blokady",
+      "description": "Liczba blokad wg trybu. AccessExclusiveLock utrzymujący się dłuższą chwilę to zwykle migracja w trakcie.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 13 },
+      "targets": [{
+        "expr": "sum by (mode) (pg_locks_count{instance=~\"$db\", datname=\"$baza\"})",
+        "legendFormat": "{{ '{{mode}}' }}",
+        "refId": "A"
+      }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Deadlocki i pliki tymczasowe",
+      "description": "Deadlock to zawsze błąd projektu zapytań. Pliki tymczasowe oznaczają sortowanie, które nie zmieściło się w work_mem.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 13 },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_database_deadlocks{instance=~\"$db\", datname=\"$baza\"}[5m])",
+          "legendFormat": "deadlocki/s",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(pg_stat_database_temp_files{instance=~\"$db\", datname=\"$baza\"}[5m])",
+          "legendFormat": "pliki tymczasowe/s",
+          "refId": "B"
+        }
+      ]
+    },
+    { "type": "row", "title": "Redis", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 }, "collapsed": false, "panels": [] },
+    {
+      "type": "stat",
+      "title": "Redis odpowiada",
+      "datasource": "Prometheus",
+      "description": "redis_up = 1 oznacza udane PING z eksportera.",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 21 },
+      "targets": [{ "expr": "redis_up{instance=~\"$db\"}", "refId": "A" }],
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{ "type": "value", "options": { "1": { "text": "OK", "color": "green", "index": 0 }, "0": { "text": "NIE ŻYJE", "color": "red", "index": 1 } } }],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Pamięć wobec maxmemory",
+      "description": "Udział zajętej pamięci w limicie maxmemory (384 MB). Po dobiciu do 100% Redis zaczyna usuwać klucze zgodnie z polityką eviction - kolejki Horizona przestaną być wtedy wiarygodne.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 21 },
+      "targets": [{
+        "expr": "redis_memory_used_bytes{instance=~\"$db\"} / clamp_min(redis_memory_max_bytes{instance=~\"$db\"}, 1) * 100",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 75 }, { "color": "red", "value": 90 }] }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Klucze łącznie",
+      "description": "Suma kluczy ze wszystkich baz Redisa. Laravel trzyma tu cache, sesje i kolejki Horizona.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 21 },
+      "targets": [{ "expr": "sum(redis_db_keys{instance=~\"$db\"})", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Klienci",
+      "description": "Połączeni klienci. Stały wzrost przy niezmiennym ruchu oznacza wyciek połączeń w aplikacji.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 21 },
+      "targets": [{ "expr": "redis_connected_clients{instance=~\"$db\"}", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Keyspace hit ratio",
+      "description": "Udział trafień w cache od startu instancji. Niska wartość przy cache aplikacyjnym oznacza, że klucze wygasają szybciej, niż są używane.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 21 },
+      "targets": [{
+        "expr": "redis_keyspace_hits_total{instance=~\"$db\"} / clamp_min(redis_keyspace_hits_total{instance=~\"$db\"} + redis_keyspace_misses_total{instance=~\"$db\"}, 1)",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } }
+    },
+    {
+      "type": "stat",
+      "title": "Klucze usunięte przez eviction",
+      "description": "Każde niezerowe wskazanie oznacza, że Redis zabrakło pamięci i wyrzucił dane, o których aplikacja nie wie, że zniknęły.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 21 },
+      "targets": [{ "expr": "redis_evicted_keys_total{instance=~\"$db\"}", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Pamięć: zajęta wobec limitu",
+      "description": "Wartości bezwzględne, żeby było widać tempo narastania, a nie tylko procent.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+      "targets": [
+        { "expr": "redis_memory_used_bytes{instance=~\"$db\"}", "legendFormat": "zajęta", "refId": "A" },
+        { "expr": "redis_memory_used_rss_bytes{instance=~\"$db\"}", "legendFormat": "RSS", "refId": "B" },
+        { "expr": "redis_memory_max_bytes{instance=~\"$db\"}", "legendFormat": "maxmemory", "refId": "C" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "bytes", "custom": { "fillOpacity": 10 } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "maxmemory" }, "properties": [
+            { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } },
+            { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+            { "id": "custom.fillOpacity", "value": 0 }
+          ]}
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Operacje na sekundę",
+      "description": "Polecenia obsłużone przez Redisa. Przy kolejkach Horizona ruch jest stały nawet bez użytkowników - to workery odpytujące kolejkę.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+      "targets": [
+        { "expr": "rate(redis_commands_processed_total{instance=~\"$db\"}[5m])", "legendFormat": "operacje/s", "refId": "A" },
+        { "expr": "sum(rate(redis_commands_total{instance=~\"$db\"}[5m]))", "legendFormat": "wywołania poleceń/s", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "fillOpacity": 10 } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Trafienia i chybienia keyspace",
+      "description": "Chybienia bez trafień oznaczają, że aplikacja pyta o klucze, których nigdy nie zapisała.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 33 },
+      "targets": [
+        { "expr": "rate(redis_keyspace_hits_total{instance=~\"$db\"}[5m])", "legendFormat": "trafienia/s", "refId": "A" },
+        { "expr": "rate(redis_keyspace_misses_total{instance=~\"$db\"}[5m])", "legendFormat": "chybienia/s", "refId": "B" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "chybienia/s" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] },
+          { "matcher": { "id": "byName", "options": "trafienia/s" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Klienci i klucze z czasem życia",
+      "description": "Zablokowani klienci to workery czekające na BLPOP - przy pustej kolejce to stan normalny.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 33 },
+      "targets": [
+        { "expr": "redis_connected_clients{instance=~\"$db\"}", "legendFormat": "połączeni", "refId": "A" },
+        { "expr": "redis_blocked_clients{instance=~\"$db\"}", "legendFormat": "zablokowani", "refId": "B" },
+        { "expr": "sum(redis_db_keys_expiring{instance=~\"$db\"})", "legendFormat": "klucze z TTL", "refId": "C" }
+      ]
+    },
+    { "type": "row", "title": "Logi systemowe maszyny bazodanowej", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 }, "collapsed": false, "panels": [] },
+    {
+      "type": "logs",
+      "title": "PostgreSQL (journald)",
+      "description": "Dziennik jednostek postgresql* z maszyny $db: checkpointy, autovacuum, odrzucone połączenia, błędy zapytań. Wymaga agenta Alloy wysyłającego logi do Loki.",
+      "datasource": "Loki",
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 41 },
+      "options": { "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true, "enableLogDetails": true },
+      "targets": [{
+        "expr": "{job=\"systemd-journal\", host=\"$db\", unit=~\"postgresql.*\"}",
+        "refId": "A"
+      }]
+    },
+    {
+      "type": "logs",
+      "title": "Redis (journald)",
+      "description": "Dziennik jednostki redis-server: zapisy RDB, ostrzeżenia o pamięci, restarty.",
+      "datasource": "Loki",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 52 },
+      "options": { "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true, "enableLogDetails": true },
+      "targets": [{
+        "expr": "{job=\"systemd-journal\", host=\"$db\", unit=~\"redis.*\"}",
+        "refId": "A"
+      }]
+    }
+  ]
+}

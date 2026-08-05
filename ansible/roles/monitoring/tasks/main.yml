@@ -1,0 +1,188 @@
+- name: Otwórz porty paneli
+  ansible.builtin.include_role:
+    name: security
+    tasks_from: open_ports
+  vars:
+    ports:
+      - { port: "{{ grafana_port }}", from: "{{ bastion_ip }}", comment: "Grafana" }
+      - { port: "{{ prometheus_port }}", from: "{{ bastion_ip }}", comment: "Prometheus" }
+      - { port: "{{ alertmanager_port }}", from: "{{ bastion_ip }}", comment: "Alertmanager" }
+      - { port: "{{ loki_port }}", from: "{{ bastion_ip }}", comment: "Loki - panel przez tunel" }
+      # Alloy z każdej maszyny pcha tu logi - bez tego Loki widzi tylko siebie.
+      - { port: "{{ loki_port }}", from: "10.0.0.0/16", comment: "Loki - push z Alloy" }
+  tags: [monitoring]
+
+- name: Utwórz katalogi konfiguracji
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ monitoring_dir }}"
+    - "{{ monitoring_dir }}/prometheus"
+    - "{{ monitoring_dir }}/alertmanager"
+    - "{{ monitoring_dir }}/loki"
+    - "{{ monitoring_dir }}/calert"
+    - "{{ monitoring_dir }}/grafana/provisioning/datasources"
+    - "{{ monitoring_dir }}/grafana/provisioning/dashboards"
+    - "{{ monitoring_dir }}/grafana/provisioning/dashboards-provider"
+  tags: [monitoring]
+
+- name: Wygeneruj konfigurację
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ monitoring_dir }}/{{ item.dest }}"
+    mode: "{{ item.mode | default('0644') }}"
+  loop:
+    - { src: prometheus.yml.j2, dest: prometheus/prometheus.yml }
+    - { src: alerts.yml.j2, dest: prometheus/alerts.yml }
+    - { src: loki.yml.j2, dest: loki/loki.yml }
+    - { src: datasources.yml.j2, dest: grafana/provisioning/datasources/datasources.yml }
+    - { src: dashboards.yml.j2, dest: grafana/provisioning/dashboards-provider/dashboards.yml }
+    # 0644, nie 0600: kontener Alertmanagera działa jako użytkownik `nobody`
+    # i przy węższych uprawnieniach nie odczyta własnej konfiguracji -
+    # "permission denied" i restart w pętli. Plik zawiera adres webhooka,
+    # ale leży na maszynie osiągalnej wyłącznie z sieci wewnętrznej.
+    - { src: alertmanager.yml.j2, dest: alertmanager/alertmanager.yml, mode: "0644" }
+    # Zawiera URL webhooka Google Chat wraz z tokenem.
+    - { src: calert.toml.j2, dest: calert/config.toml, mode: "0644" }
+  loop_control:
+    label: "{{ item.dest }}"
+  notify: reload monitoring
+  tags: [monitoring]
+
+# Dashboardy z grafana.com odwołują się do źródeł danych przez placeholdery
+# ${DS_PROMETHEUS} i ${DS_LOKI}, które normalnie wypełnia kreator importu.
+# Przy provisioningu z pliku nikt ich nie wypełnia - trzeba podmienić na nazwy
+# źródeł zdefiniowanych w datasources.yml, inaczej panele zgłaszają błąd źródła.
+- name: Sprawdź, które dashboardy z grafana.com już leżą na dysku
+  ansible.builtin.stat:
+    path: "{{ monitoring_dir }}/grafana/provisioning/dashboards/{{ item.key }}.json"
+  loop: "{{ grafana_dashboards | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: grafana_dashboard_files
+  changed_when: false
+  tags: [monitoring]
+
+# Pobieramy tylko brakujące pliki. Samo `force: false` tu nie wystarcza:
+# get_url porównuje zawartość z serwerem, a plik na dysku jest już po podmianie
+# nazw źródeł danych - więc zawsze się różni i zawsze schodzi na nowo. Skutkiem
+# był restart Grafany przy KAŻDYM przebiegu playbooka, mimo że nic się nie zmieniło.
+# Aktualizacja dashboardu: skasować plik i uruchomić rolę ponownie.
+- name: Pobierz brakujące dashboardy
+  ansible.builtin.get_url:
+    url: "https://grafana.com/api/dashboards/{{ item.item.value }}/revisions/latest/download"
+    dest: "{{ monitoring_dir }}/grafana/provisioning/dashboards/{{ item.item.key }}.json"
+    mode: "0644"
+    timeout: 30
+  loop: "{{ grafana_dashboard_files.results }}"
+  loop_control:
+    label: "{{ item.item.key }} (grafana.com id={{ item.item.value }})"
+  when: not item.stat.exists
+  retries: 2
+  delay: 3
+  tags: [monitoring]
+
+- name: Podmień placeholder źródła Prometheusa
+  ansible.builtin.replace:
+    path: "{{ monitoring_dir }}/grafana/provisioning/dashboards/{{ item }}.json"
+    regexp: '\$\{DS_PROMETHEUS\}'
+    replace: 'Prometheus'
+  loop: "{{ grafana_dashboards.keys() | list }}"
+  notify: restart grafana
+  tags: [monitoring]
+
+- name: Podmień placeholder źródła Loki
+  ansible.builtin.replace:
+    path: "{{ monitoring_dir }}/grafana/provisioning/dashboards/{{ item }}.json"
+    regexp: '\$\{DS_LOKI\}'
+    replace: 'Loki'
+  loop: "{{ grafana_dashboards.keys() | list }}"
+  notify: restart grafana
+  tags: [monitoring]
+
+# Część dashboardów używa zmiennej szablonowej ${datasource} zamiast placeholdera
+# importu. Przy provisioningu ta zmienna nie ma wartości domyślnej i panele
+# zgłaszają "datasource not found".
+- name: Podmień zmienną szablonową datasource
+  ansible.builtin.replace:
+    path: "{{ monitoring_dir }}/grafana/provisioning/dashboards/{{ item }}.json"
+    regexp: '"\$\{datasource\}"'
+    replace: '"Prometheus"'
+  loop: "{{ grafana_dashboards.keys() | list }}"
+  notify: restart grafana
+  tags: [monitoring]
+
+- name: Wgraj własne dashboardy
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ monitoring_dir }}/grafana/provisioning/dashboards/{{ item.dest }}"
+    mode: "0644"
+  loop:
+    - { src: dashboard-overview.json.j2, dest: wolffire-overview.json }
+    - { src: dashboard-logs.json.j2, dest: wolffire-logs.json }
+    - { src: dashboard-app-logs.json.j2, dest: wolffire-app-logs.json }
+    - { src: dashboard-database.json.j2, dest: wolffire-database.json }
+    - { src: dashboard-containers.json.j2, dest: wolffire-containers.json }
+  loop_control:
+    label: "{{ item.dest }}"
+  notify: restart grafana
+  tags: [monitoring]
+
+- name: Usuń dashboardy niepasujące do naszego schematu etykiet
+  ansible.builtin.file:
+    path: "{{ monitoring_dir }}/grafana/provisioning/dashboards/loki-logs.json"
+    state: absent
+  notify: restart grafana
+  tags: [monitoring]
+
+- name: Wgraj szablon wiadomości alertu
+  ansible.builtin.template:
+    src: calert-message.tmpl.j2
+    dest: "{{ monitoring_dir }}/calert/message.tmpl"
+    mode: "0644"
+  # Szablon jest montowany do kontenera read-only i czytany przy starcie,
+  # więc sama podmiana pliku nic nie da - trzeba przeładować calerta.
+  notify: restart calert
+  tags: [monitoring]
+
+- name: Wygeneruj compose
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ monitoring_dir }}/compose.yml"
+    # Zawiera hasło administratora Grafany.
+    mode: "0600"
+  notify: restart monitoring
+  tags: [monitoring]
+
+- name: Uruchom stos monitoringu
+  community.docker.docker_compose_v2:
+    project_src: "{{ monitoring_dir }}"
+    state: present
+    pull: missing
+  tags: [monitoring]
+
+# Sprawdzenie, że Prometheus faktycznie wstał i przyjął konfigurację - bez tego
+# błąd w szablonie ujawniłby się dopiero przy braku alertu.
+- name: Poczekaj na Prometheusa
+  ansible.builtin.uri:
+    url: "http://{{ private_ip }}:{{ prometheus_port }}/-/ready"
+    status_code: [200]
+  register: prom_ready
+  retries: 12
+  delay: 5
+  until: prom_ready.status == 200
+  changed_when: false
+  tags: [monitoring]
+
+- name: Poczekaj na Grafanę
+  ansible.builtin.uri:
+    url: "http://{{ private_ip }}:{{ grafana_port }}/api/health"
+    status_code: [200]
+  register: grafana_ready
+  retries: 12
+  delay: 5
+  until: grafana_ready.status == 200
+  changed_when: false
+  tags: [monitoring]

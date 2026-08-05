@@ -1,0 +1,91 @@
+# Zarządzane przez Ansible.
+#
+# Cele wyliczane są z inventory, nie wpisywane ręcznie - dodanie maszyny do
+# inventory automatycznie włącza ją do monitoringu. Świadomie bez operatora
+# i automatycznego odkrywania: jawna lista pokazuje dokładnie, co jest zbierane.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: wolffire
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:{{ prometheus_port }}"]
+
+  # Metryki systemowe każdej maszyny w inventory.
+  - job_name: node
+    static_configs:
+{% for host in groups['all'] | sort %}
+{% if hostvars[host].private_ip is defined %}
+      - targets: ["{{ hostvars[host].private_ip }}:{{ node_exporter_port }}"]
+        labels:
+          instance: "{{ host }}"
+{% endif %}
+{% endfor %}
+
+  # Metryki kontenerów - tylko maszyny z Dockerem.
+  - job_name: cadvisor
+    static_configs:
+{% for host in groups['docker'] | sort %}
+{% if hostvars[host].private_ip is defined %}
+      - targets: ["{{ hostvars[host].private_ip }}:{{ cadvisor_port }}"]
+        labels:
+          instance: "{{ host }}"
+{% endif %}
+{% endfor %}
+
+  # Metryki samego demona Dockera - liczba kontenerów, operacje na obrazach,
+  # błędy builda. Uzupełniają cAdvisor, który patrzy na zużycie zasobów.
+  - job_name: docker
+    static_configs:
+{% for host in groups['docker'] | sort %}
+{% if hostvars[host].private_ip is defined %}
+      - targets: ["{{ hostvars[host].private_ip }}:9323"]
+        labels:
+          instance: "{{ host }}"
+{% endif %}
+{% endfor %}
+
+  - job_name: postgres
+    static_configs:
+{% for host in groups['postgres'] | default([]) | sort %}
+{% if hostvars[host].private_ip is defined %}
+      - targets: ["{{ hostvars[host].private_ip }}:{{ postgres_exporter_port }}"]
+        labels:
+          instance: "{{ host }}"
+{% endif %}
+{% endfor %}
+
+  - job_name: redis
+    static_configs:
+{% for host in groups['redis'] | default([]) | sort %}
+{% if hostvars[host].private_ip is defined %}
+      - targets: ["{{ hostvars[host].private_ip }}:{{ redis_exporter_port }}"]
+        labels:
+          instance: "{{ host }}"
+{% endif %}
+{% endfor %}
+
+  # Aplikacja: eksporter php-fpm (workery, kolejka nasłuchu, wolne sloty).
+  # Laravel nie wystawia własnego /metrics - status FPM pokrywa warstwę
+  # operacyjną, a metryki biznesowe nie są przedmiotem tego monitoringu.
+  - job_name: wolffire
+    static_configs:
+{% for host in groups['dev'] | default([]) | sort %}
+{% if hostvars[host].private_ip is defined %}
+      - targets: ["{{ hostvars[host].private_ip }}:9253"]
+        labels:
+          instance: "{{ host }}"
+          environment: dev
+{% endif %}
+{% endfor %}

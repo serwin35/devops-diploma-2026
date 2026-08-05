@@ -1,0 +1,7 @@
+# Tunel Cloudflare tej maszyny. Token pobierany z outputu Terraforma po nazwie.
+cloudflared_tunnel_name: wf-monitoring
+
+# Temat SNS dla kopii alertów na e-mail (obok Google Chat). ARN pochodzi z
+# outputu bootstrapa Terraforma (alerts_sns_topic_arn); klucze IAM użytkownika
+# wolffire-alertmanager leżą w group_vars/all/secrets.sops.yml.
+alertmanager_sns_topic_arn: "arn:aws:sns:us-east-1:195275647734:wolffire-alerts"
