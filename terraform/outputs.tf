@@ -41,11 +41,11 @@ output "cloudflare_tunnel_tokens" {
   description = "Tokeny cloudflared per tunel"
 
   value = {
-    "wf-cicd"       = module.cloudflare_cicd.tunnel_token
-    "wf-monitoring" = module.cloudflare_monitoring.tunnel_token
-    "wf-proxmox"    = module.cloudflare_proxmox.tunnel_token
-    "wf-dev"        = module.cloudflare_dev.tunnel_token
-    "wf-prod"       = module.cloudflare_prod.tunnel_token
+    "wf-cicd"       = module.cicd.tunnel_token
+    "wf-monitoring" = module.observability.tunnel_token
+    "wf-proxmox"    = module.proxmox_bootstrap.tunnel_token
+    "wf-dev"        = module.wolffire_dev.tunnel_token
+    "wf-prod"       = module.wolffire_prod.tunnel_token
   }
 }
 
@@ -53,10 +53,10 @@ output "public_hostnames" {
   description = "Nazwy hostów wystawione przez tunele"
 
   value = merge(
-    module.cloudflare_cicd.hostnames,
-    module.cloudflare_monitoring.hostnames,
-    module.cloudflare_proxmox.hostnames,
-    module.cloudflare_dev.hostnames,
-    module.cloudflare_prod.hostnames,
+    module.cicd.hostnames,
+    module.observability.hostnames,
+    module.proxmox_bootstrap.hostnames,
+    module.wolffire_dev.hostnames,
+    module.wolffire_prod.hostnames,
   )
 }

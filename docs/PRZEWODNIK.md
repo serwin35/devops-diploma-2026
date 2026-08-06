@@ -27,12 +27,12 @@ devops-diploma-2026/
 │       │   ├── proxmox/vm/      # Jeden moduł maszyny wirtualnej - wywoływany 8×
 │       │   └── cloudflare/      # tunnel/, zero_trust_policy/, zone_settings/
 │       └── services/            # Złożenia klocków w konkretne maszyny/usługi
-│           ├── proxmox/bootstrap/   # SDN, storage, cloud-init, grupy bezpieczeństwa, IPv6
+│           ├── proxmox/bootstrap/   # SDN, storage, cloud-init, grupy bezpieczeństwa, IPv6, tunel UI Proxmoxa
 │           ├── proxmox/bastion/     # Jedyna maszyna z publicznym adresem
-│           ├── proxmox/cicd/        # cicd-1
-│           ├── proxmox/observability/ # monitoring-1
-│           ├── proxmox/wolffire/dev/  # wolffire-dev-app-1
-│           ├── proxmox/wolffire/prod/ # k3s-server-1, 2× k3s-agent, wolffire-prod-db-1
+│           ├── proxmox/cicd/        # cicd-1 + tunel (Jenkins)
+│           ├── proxmox/observability/ # monitoring-1 + tunel (Grafana, Prometheus, Alertmanager)
+│           ├── proxmox/wolffire/dev/  # wolffire-dev-app-1 + tunel (dev)
+│           ├── proxmox/wolffire/prod/ # k3s-server-1, 2× k3s-agent, wolffire-prod-db-1, S3 + tunel (apex)
 │           └── cloudflare/dns/      # Rekordy poza tunelami (MX, SPF) + polityka TLS strefy
 │
 ├── ansible/                     # WARSTWA 2: co działa WEWNĄTRZ maszyn
@@ -162,7 +162,8 @@ plik zgodnie z regułą w `.sops.yaml`.
   (grupa + `private_ip`), host w `ansible/ssh_config` (`ProxyJump %r@wf-bastion-1`),
   przypisanie ról w `ansible/playbook.yml`.
 - **Nowy port** dostępny z internetu przez tunel -> dopisz usługę do `services`
-  w odpowiednim module `cloudflare_*` w `main.tf` (np. `cloudflare_monitoring`).
+  w `tunnel.tf` modułu usługowego maszyny (np.
+  `terraform/modules/services/proxmox/observability/tunnel.tf`).
   Port dostępny *między segmentami* (np. nowy eksporter) -> nowa reguła w
   odpowiedniej grupie bezpieczeństwa w
   `terraform/modules/services/proxmox/bootstrap/locals.tf` (patrz §3.1 niżej)
@@ -297,8 +298,8 @@ potwierdzenie subskrypcji.
 - **Własny dashboard** -> nowy szablon `dashboard-<nazwa>.json.j2` w
   `templates/`, dopisany do pętli `Wgraj własne dashboardy` w
   `ansible/roles/monitoring/tasks/main.yml` (linie 117-131).
-- **Nowy port panelu dostępny z internetu** -> dopisz usługę w module
-  `cloudflare_monitoring` w `terraform/main.tf` (sekcja Cloudflare tunele).
+- **Nowy port panelu dostępny z internetu** -> dopisz usługę w
+  `terraform/modules/services/proxmox/observability/tunnel.tf`.
 
 ---
 

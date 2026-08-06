@@ -45,7 +45,7 @@ jenkins_agent_idle_minutes: 1
 jenkins_admin_user: admin
 # Hasło pochodzi z group_vars/all/secrets.sops.yml (jenkins_admin_password).
 
-# Adres publiczny (tunel Cloudflare, terraform/main.tf -> module cloudflare_cicd).
+# Adres publiczny (tunel Cloudflare, terraform/modules/services/proxmox/cicd/tunnel.tf).
 # Jenkins buduje z niego odnośniki w powiadomieniach i w konsoli agenta.
 jenkins_url: "https://jenkins.{{ public_zone }}"
 

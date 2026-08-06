@@ -25,6 +25,12 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "app_storage" {
   bucket = aws_s3_bucket.app_storage.id
 
   rule {
+    # AWS blokuje klucze klienta (SSE-C) na nowych bucketach sam z siebie
+    # i dopisuje tę wartość przy każdym odczycie. Deklarujemy ją jawnie,
+    # bo inaczej plan w nieskończoność "naprawia" pustą listę.
+    blocked_encryption_types = ["SSE-C"]
+    bucket_key_enabled       = false
+
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
     }

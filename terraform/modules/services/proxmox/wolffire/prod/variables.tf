@@ -8,7 +8,7 @@ variable "app_storage_bucket" {
 variable "zone" {
   type        = string
   nullable    = false
-  description = "Domena publiczna aplikacji - origin dopuszczony w CORS bucketa"
+  description = "Domena publiczna aplikacji - rekordy tunelu i origin dopuszczony w CORS bucketa"
 }
 
 variable "node_name" {
@@ -39,4 +39,17 @@ variable "cloud_init_file_id" {
   type        = string
   nullable    = false
   description = "ID snippetu cloud-init"
+}
+
+variable "cloudflare_account_name" {
+  type        = string
+  nullable    = false
+  description = "Nazwa konta Cloudflare, w którym stoi tunel produkcji"
+}
+
+variable "allowed_emails" {
+  type        = set(string)
+  nullable    = false
+  default     = []
+  description = "Adresy e-mail dopuszczone przez Zero Trust Access do paneli maszyny"
 }

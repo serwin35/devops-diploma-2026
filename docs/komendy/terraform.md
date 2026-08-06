@@ -341,7 +341,7 @@ to **utratę jej dysku** - dane odtwarza dopiero Ansible (`make ansible-apply`).
 
 ```bash
 sops exec-env secrets.sops.yaml \
-  'terraform -chdir=terraform apply -target=module.cloudflare_monitoring'
+  'terraform -chdir=terraform apply -target=module.observability.module.tunnel'
 ```
 
 Narzędzie diagnostyczne, nie codzienny przepływ. Powtarzalne używanie `-target`

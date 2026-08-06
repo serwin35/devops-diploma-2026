@@ -11,16 +11,12 @@ locals {
 
   node_name = keys(var.proxmox_node_names)[0]
 
-  # Adresy maszyn, do których kieruje ruch tunel Cloudflare i które odpytuje
-  # Prometheus. Wyprowadzone z numerów segmentów, żeby nie powtarzać ich
-  # w kilku miejscach. Te same adresy są ustawiane w modułach usługowych -
-  # zmiana w jednym miejscu wymaga zmiany w drugim.
+  # Adresy maszyn potrzebne WARSTWIE hypervisora (reguły firewalla grup
+  # bezpieczeństwa). Te same adresy są ustawiane w modułach usługowych -
+  # zmiana w jednym miejscu wymaga zmiany w drugim. Adresy origin tuneli
+  # zniknęły stąd - każdy tunel bierze IP z modułu VM-ki obok siebie.
   vm_ips = {
-    bastion    = "10.0.${local.vnets.dmz}.10"
     cicd       = "10.0.${local.vnets.apps}.10"
     monitoring = "10.0.${local.vnets.apps}.20"
-    dev        = "10.0.${local.vnets.apps}.30"
-    prod       = "10.0.${local.vnets.k3s}.10"
-    db         = "10.0.${local.vnets.dbs}.10"
   }
 }
