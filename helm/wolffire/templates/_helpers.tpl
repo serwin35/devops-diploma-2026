@@ -107,6 +107,9 @@ FILESYSTEM_DISK: {{ .Values.app.filesystemDisk | quote }}
 AWS_BUCKET: {{ required "Podaj s3.bucket przy filesystemDisk=s3" .Values.s3.bucket | quote }}
 AWS_DEFAULT_REGION: {{ .Values.s3.region | quote }}
 AWS_USE_PATH_STYLE_ENDPOINT: "false"
+{{- /* Załączniki (Spatie MediaLibrary) też na S3 - lokalny dysk poda
+widziałaby tylko replika, która plik zapisała. */}}
+ATTACHMENTS_DISK: "s3"
 {{- end }}
 MAIL_MAILER: "log"
 MAIL_FROM_ADDRESS: {{ .Values.mail.fromAddress | quote }}
