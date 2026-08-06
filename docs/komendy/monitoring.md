@@ -251,20 +251,32 @@ Routing tree:
 └── default-route  receiver: gchat
     ├── {alertname="Watchdog"}  receiver: null
     ├── {severity=~"warning|critical"}  continue: true  receiver: sns-email
-    └── {severity="critical"}  receiver: gchat
+    ├── {severity="critical"}  receiver: gchat
+    └── {severity="warning"}  receiver: gchat
 ```
 
 Trasy sprawdzane są po kolei, a pierwsze dopasowanie normalnie kończy
-wyszukiwanie. Dwie rzeczy widać wprost: `Watchdog` jest **pierwszy** i idzie do
-`null`, żeby żadna kolejna reguła nie mogła go przechwycić i zasypać kanału co
-4 godziny; trasa `sns-email` ma `continue: true`, więc alert leci dalej w dół
-drzewa i trafia **i** na e-mail, **i** na Chat - bez tej flagi kanał Chat
-przestałby dostawać cokolwiek o wadze warning/critical.
+wyszukiwanie. `Watchdog` jest **pierwszy** i idzie do `null`, żeby żadna
+kolejna reguła nie mogła go przechwycić i zasypać kanału co 4 godziny; trasa
+`sns-email` ma `continue: true`, więc alert po dopasowaniu leci dalej w dół
+drzewa.
+
+**Pułapka, na której ten routing raz się wyłożył:** gdy dopasuje się
+JAKAKOLWIEK trasa potomna, receiver trasy głównej przestaje być fallbackiem.
+Zanim istniała jawna trasa `severity="warning"`, alert warning dopasowywał
+`sns-email` (z `continue`), po czym nie pasował już do niczego - i kończył na
+samym e-mailu, choć intuicja podpowiada, że "spadnie" do `gchat`
+z default-route. Nie spadnie. Objaw z 2026-08-06: `KontenerZatrzymany`
+przyszedł mailem, na Chacie cisza, a calert od doby nie dostał ani jednego
+`/dispatch`. Stąd zasada: **każda waga ma swoją jawną trasę do `gchat`**,
+a receiver default-route jest tylko siatką na alerty bez etykiety `severity`.
 
 ```bash
 # Test suchy: gdzie trafi alert o takich etykietach, bez wysyłania czegokolwiek
 $AM config routes test severity=critical alertname=BazaNieodpowiada
 # -> sns-email,gchat   (dwa odbiorcy: dowód, że continue: true działa)
+$AM config routes test severity=warning alertname=KontenerZatrzymany
+# -> sns-email,gchat   (samo sns-email = wróciła pułapka opisana wyżej)
 
 # Walidacja pliku konfiguracji
 sudo docker exec alertmanager amtool check-config /etc/alertmanager/alertmanager.yml
@@ -481,7 +493,7 @@ kolejnych sprawdzeń, więc chwilowy skok nic nie wyśle.
 | `BrakMiejscaNaDysku` | critical / 5m | `docker system prune`, rotacja logów, natychmiast |
 | `EksporterNieodpowiada` | warning / 10m | `systemctl status prometheus-node-exporter`, `docker ps` |
 | `KontenerRestartujeSie` | warning / 10m | `docker logs --tail 100 <nazwa>` - szukaj przyczyny wyjścia |
-| `KontenerZatrzymany` | warning / 10m | `docker ps -a`, potem logi kontenera `Exited` |
+| `KontenerZatrzymany` | warning / 2m | `docker ps -a`, potem logi kontenera `Exited`; krótkie `for`, bo compose nie zostawia stanu `stopped` przy wdrożeniach |
 | `MaloMiejscaNaDysku`, `DyskZapelniSieWDobe` | warning / 15m, 1h | `df -h`, `docker system df`, `du -sh /var/lib/docker/*` |
 | `WysokieZuzyciePamieci`, `WysokieObciazenieCPU` | warning / 20m | `top`; sprawdź najpierw, czy to nie trwający build |
 | `RedisBliskoLimituPamieci` | warning / 10m | pilne przy `noeviction`: 100% to błędy zapisu, nie spowolnienie |
@@ -565,6 +577,9 @@ Najczęstsze rozstrzygnięcia:
 - Jest, nie jest wyciszony, `severity=none` -> trafił na trasę `null` (tak
   właśnie działa `Watchdog` i to jest poprawne).
 - Chat dostaje, e-mail nie -> subskrypcja SNS w stanie `Deleted`, patrz §6.
+- E-mail dochodzi, Chat nie -> alert utknął na trasie `sns-email` i nie
+  dopasował żadnej trasy `gchat`; `$AM config routes test severity=warning`
+  musi pokazać dwa odbiorcy - patrz pułapka routingu w §5.
 - Nic nie dochodzi i **nie ma `Watchdog` w Alertmanagerze** -> padł cały potok,
   nie pojedynczy kanał; zacznij od `docker compose ps`.
 
