@@ -1,4 +1,4 @@
-- name: Konta imienne
+- name: Personal accounts
   ansible.builtin.include_tasks: users.yml
   tags: [login, users]
 
@@ -6,6 +6,6 @@
   ansible.builtin.include_tasks: sudo.yml
   tags: [login, sudo]
 
-- name: Utwardzenie SSH
+- name: SSH hardening
   ansible.builtin.include_tasks: ssh.yml
   tags: [login, ssh]

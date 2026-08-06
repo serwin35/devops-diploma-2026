@@ -1,18 +1,18 @@
-- name: Utwórz katalog na klucze APT
+- name: Create the APT keyring directory
   ansible.builtin.file:
     path: /etc/apt/keyrings
     state: directory
     mode: "0755"
   tags: [alloy, logs]
 
-- name: Pobierz klucz GPG Grafany
+- name: Download the Grafana GPG key
   ansible.builtin.get_url:
     url: https://apt.grafana.com/gpg.key
     dest: /etc/apt/keyrings/grafana.asc
     mode: "0644"
   tags: [alloy, logs]
 
-- name: Dodaj repozytorium Grafany
+- name: Add the Grafana repository
   ansible.builtin.deb822_repository:
     name: grafana
     types: [deb]
@@ -24,7 +24,7 @@
     state: present
   tags: [alloy, logs]
 
-- name: Zainstaluj Alloy
+- name: Install Alloy
   ansible.builtin.apt:
     name: alloy
     state: present
@@ -33,14 +33,14 @@
 
 # Alloy działa jako użytkownik `alloy`. Żeby czytać journald i gniazdo Dockera,
 # musi należeć do odpowiednich grup - inaczej startuje, ale nie zbiera niczego.
-- name: Dodaj Alloy do grup systemd-journal i docker
+- name: Add Alloy to the systemd-journal and docker groups
   ansible.builtin.user:
     name: alloy
     groups: "{{ ['systemd-journal'] + (['docker'] if 'docker' in group_names else []) }}"
     append: true
   tags: [alloy, logs]
 
-- name: Wygeneruj konfigurację
+- name: Generate configuration
   ansible.builtin.template:
     src: config.alloy.j2
     dest: /etc/alloy/config.alloy
@@ -49,7 +49,7 @@
   notify: restart alloy
   tags: [alloy, logs]
 
-- name: Włącz Alloy
+- name: Enable Alloy
   ansible.builtin.systemd_service:
     name: alloy
     state: started

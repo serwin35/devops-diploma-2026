@@ -1,4 +1,4 @@
-- name: Zbierz konta imienne z katalogu kluczy
+- name: Collect personal accounts from the keys directory
   ansible.builtin.set_fact:
     human_users: >-
       {{
@@ -7,7 +7,7 @@
         | list
       }}
 
-- name: Załóż konta imienne
+- name: Create personal accounts
   ansible.builtin.user:
     name: "{{ item }}"
     shell: /bin/bash
@@ -16,7 +16,7 @@
     create_home: true
   loop: "{{ human_users }}"
 
-- name: Rozłóż klucze publiczne
+- name: Distribute public keys
   ansible.posix.authorized_key:
     user: "{{ item }}"
     key: "{{ lookup('file', '../keys/humans/' ~ item ~ '.pub') }}"

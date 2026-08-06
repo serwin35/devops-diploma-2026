@@ -5,16 +5,16 @@
 # Token jest wspólnym sekretem serwera i agentów, więc musi przyjść z zewnątrz
 # (group_vars/all/secrets.sops.yml). Generowanie go w roli dawałoby przy każdym
 # odtworzeniu maszyny inną wartość i agenci przestaliby dołączać do klastra.
-- name: Sprawdź, czy token klastra jest dostępny
+- name: Check that the cluster token is available
   ansible.builtin.assert:
     that:
       - k3s_token | default('') | length >= 16
     fail_msg: >-
-      Brak zmiennej k3s_token (albo jest za krótka). Wygeneruj
-      `openssl rand -hex 32` i zapisz w group_vars/all/secrets.sops.yml.
+      The k3s_token variable is missing (or too short). Generate it with
+      `openssl rand -hex 32` and store it in group_vars/all/secrets.sops.yml.
   tags: [k3s]
 
-- name: Zainstaluj zależności instalatora
+- name: Install installer dependencies
   ansible.builtin.apt:
     name:
       - curl
@@ -24,14 +24,14 @@
     cache_valid_time: 3600
   tags: [k3s]
 
-- name: Otwórz porty węzła klastra
+- name: Open cluster node ports
   ansible.builtin.include_role:
     name: security
     tasks_from: open_ports
   vars:
     ports:
-      - { port: "{{ k3s_api_port }}", from: "{{ k3s_api_allowed_cidr }}", comment: "API klastra k3s" }
-      - { port: "{{ k3s_kubelet_port }}", from: "{{ k3s_subnet }}", comment: "kubelet (metrics-server, logi podów)" }
+      - { port: "{{ k3s_api_port }}", from: "{{ k3s_api_allowed_cidr }}", comment: "k3s cluster API" }
+      - { port: "{{ k3s_kubelet_port }}", from: "{{ k3s_subnet }}", comment: "kubelet (metrics-server, pod logs)" }
       - { port: "{{ k3s_flannel_port }}", proto: udp, from: "{{ k3s_subnet }}", comment: "flannel VXLAN" }
   tags: [k3s]
 
@@ -39,13 +39,13 @@
 # a wychodzi drugim - dla jądra to FORWARD, który UFW domyślnie odrzuca. Bez tego
 # klaster wstaje poprawnie, ale pody po cichu nie rozwiązują nazw i nie widzą się
 # nawzajem.
-- name: Zezwól na ruch routowany między podami
+- name: Allow routed traffic between pods
   community.general.ufw:
     direction: routed
     policy: allow
   tags: [k3s]
 
-- name: Pobierz oficjalny skrypt instalacyjny
+- name: Download the official install script
   ansible.builtin.get_url:
     url: "{{ k3s_install_script_url }}"
     dest: "{{ k3s_install_script_path }}"
@@ -57,7 +57,7 @@
   when: "'k3s_server' in group_names"
   tags: [k3s]
 
-- name: Węzły robocze
+- name: Worker nodes
   ansible.builtin.include_tasks: agent.yml
   when: "'k3s_agent' in group_names"
   tags: [k3s]

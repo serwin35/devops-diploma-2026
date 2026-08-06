@@ -1,14 +1,14 @@
-- name: Otwórz port aplikacji
+- name: Open the application port
   ansible.builtin.include_role:
     name: security
     tasks_from: open_ports
   vars:
     ports:
-      - { port: "{{ wolffire_http_port }}", from: "{{ bastion_ip }}", comment: "Aplikacja przez tunel" }
+      - { port: "{{ wolffire_http_port }}", from: "{{ bastion_ip }}", comment: "Application via tunnel" }
       - { port: 9253, from: "{{ monitoring_ip }}", comment: "php-fpm exporter" }
   tags: [wolffire]
 
-- name: Utwórz katalog aplikacji
+- name: Create the application directory
   ansible.builtin.file:
     path: "{{ wolffire_dir }}"
     state: directory
@@ -17,7 +17,7 @@
 
 # Rejestr jest prywatny, więc maszyna musi się uwierzytelnić, żeby pobrać obrazy.
 # Token ma zakres wyłącznie read:packages.
-- name: Zaloguj się do rejestru obrazów
+- name: Log in to the image registry
   community.docker.docker_login:
     registry_url: ghcr.io
     username: "{{ ghcr_username }}"
@@ -25,7 +25,7 @@
   no_log: true
   tags: [wolffire]
 
-- name: Wygeneruj plik środowiskowy aplikacji
+- name: Generate the application environment file
   ansible.builtin.template:
     src: env.j2
     dest: "{{ wolffire_dir }}/.env.app"
@@ -37,7 +37,7 @@
 # Wersja obrazu w osobnym pliku, nie w compose.yml. Dzięki temu wdrożenie
 # sprowadza się do podmiany jednej linii i przeładowania jednostki - pipeline
 # nie musi umieć Dockera ani mieć dostępu do jego gniazda.
-- name: Ustaw wersję obrazów
+- name: Set the image version
   ansible.builtin.copy:
     dest: "{{ wolffire_dir }}/.env"
     mode: "0644"
@@ -45,7 +45,7 @@
   notify: restart wolffire
   tags: [wolffire]
 
-- name: Wygeneruj compose
+- name: Generate compose
   ansible.builtin.template:
     src: compose.yml.j2
     dest: "{{ wolffire_dir }}/compose.yml"
@@ -53,7 +53,7 @@
   notify: restart wolffire
   tags: [wolffire]
 
-- name: Zainstaluj jednostkę systemd
+- name: Install the systemd unit
   ansible.builtin.template:
     src: wolffire.service.j2
     dest: /etc/systemd/system/wolffire.service
@@ -63,7 +63,7 @@
     - restart wolffire
   tags: [wolffire]
 
-- name: Włącz aplikację
+- name: Enable the application
   ansible.builtin.systemd_service:
     name: wolffire
     state: started
@@ -74,10 +74,10 @@
 # Handlery domyślnie odpalają się na końcu playa - ale migracje i weryfikacja
 # poniżej muszą działać już na NOWEJ konfiguracji. Bez tego zmiana np. hasła
 # Redisa kończy się migracją na starym kontenerze z nowym .env.
-- name: Zastosuj zmiany konfiguracji przed migracjami
+- name: Apply configuration changes before migrations
   ansible.builtin.meta: flush_handlers
 
-- name: Poczekaj na bazę
+- name: Wait for the database
   ansible.builtin.command: docker compose exec -T postgres pg_isready -U {{ wolffire_db_user }}
   args:
     chdir: "{{ wolffire_dir }}"
@@ -93,7 +93,7 @@
 
 # Migracje uruchamiane osobnym kontenerem z tego samego obrazu, a nie przy starcie
 # php-fpm - inaczej przy wielu replikach każda próbowałaby migrować równolegle.
-- name: Uruchom migracje
+- name: Run migrations
   ansible.builtin.command: >-
     docker compose run --rm --no-deps php php artisan migrate --force
   args:
@@ -107,7 +107,7 @@
 # odświeżenie do tego samego stanu, a nie zmiana: przy niezmienionej konfiguracji
 # powstają identyczne pliki. Wcześniejsze `changed_when: true` raportowało zmianę
 # w każdym przebiegu i playbook nigdy nie osiągał stanu ustalonego.
-- name: Zbuduj cache konfiguracji i tras
+- name: Build config and route caches
   ansible.builtin.command: >-
     docker compose exec -T php php artisan {{ item }}
   args:
@@ -117,7 +117,7 @@
   failed_when: false
   tags: [wolffire]
 
-- name: Sprawdź, czy aplikacja odpowiada
+- name: Check that the application responds
   ansible.builtin.uri:
     url: "http://{{ private_ip }}:{{ wolffire_http_port }}/up"
     status_code: [200]

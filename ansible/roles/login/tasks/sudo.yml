@@ -1,4 +1,4 @@
-- name: Nadaj sudo kontom imiennym
+- name: Grant sudo to personal accounts
   ansible.builtin.copy:
     dest: "/etc/sudoers.d/{{ item }}"
     mode: "0440"
@@ -8,7 +8,7 @@
 
 # Konto maszynowe Ansible - zakładane przez cloud-init, ale sudoers dopisujemy tutaj,
 # żeby stan był opisany w jednym miejscu i przeżył odtworzenie maszyny.
-- name: Nadaj sudo kontu maszynowemu
+- name: Grant sudo to the machine account
   ansible.builtin.copy:
     dest: /etc/sudoers.d/ansible
     mode: "0440"

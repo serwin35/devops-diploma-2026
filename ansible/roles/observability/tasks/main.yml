@@ -1,7 +1,7 @@
 # Rola leci na wszystkie maszyny - każda musi być widoczna dla Prometheusa.
 # Metryki kontenerów (cAdvisor) tylko tam, gdzie faktycznie stoi Docker.
 
-- name: Zainstaluj node_exporter
+- name: Install node_exporter
   ansible.builtin.apt:
     name: prometheus-node-exporter
     state: present
@@ -12,7 +12,7 @@
 # private_ip z inventory, NIE ansible_default_ipv4: na bastionie domyślna trasa
 # idzie przez interfejs publiczny i fakt wskazywałby adres 51.83.139.3 -
 # node_exporter przestałby być osiągalny dla Prometheusa (scrapuje 10.0.110.10).
-- name: Ustaw adres nasłuchu node_exportera
+- name: Set the node_exporter listen address
   ansible.builtin.copy:
     dest: /etc/default/prometheus-node-exporter
     mode: "0644"
@@ -22,7 +22,7 @@
   notify: restart node_exporter
   tags: [observability]
 
-- name: Włącz node_exporter
+- name: Enable node_exporter
   ansible.builtin.service:
     name: prometheus-node-exporter
     state: started

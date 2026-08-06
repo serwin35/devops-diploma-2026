@@ -12,7 +12,7 @@
 # klucza `value`, a następne set_fact wywala cały przebieg. Odczyt w trybie
 # sprawdzania jest bezpieczny i dopiero on pozwala sensownie sprawdzić
 # resztę roli (plik z tokenem, jednostka systemd).
-- name: Odczytaj tokeny tuneli ze stanu Terraforma
+- name: Read tunnel tokens from Terraform state
   cloud.terraform.terraform_output:
     project_path: "{{ terraform_project_path }}"
     name: cloudflare_tunnel_tokens
@@ -25,13 +25,13 @@
   tags: [cloudflared]
 
 # Każda maszyna ma własny tunel, więc bierze własny token z mapy.
-- name: Wybierz token dla tunelu tej maszyny
+- name: Select the token for this machine's tunnel
   ansible.builtin.set_fact:
     tunnel_token_value: "{{ tunnel_tokens.value[cloudflared_tunnel_name] }}"
   no_log: true
   tags: [cloudflared]
 
-- name: Załóż użytkownika usługi
+- name: Create the service user
   ansible.builtin.user:
     name: cloudflared
     system: true
@@ -39,21 +39,21 @@
     create_home: false
   tags: [cloudflared]
 
-- name: Utwórz katalog na klucze APT
+- name: Create the APT keyring directory
   ansible.builtin.file:
     path: /etc/apt/keyrings
     state: directory
     mode: "0755"
   tags: [cloudflared]
 
-- name: Pobierz klucz GPG Cloudflare
+- name: Download the Cloudflare GPG key
   ansible.builtin.get_url:
     url: https://pkg.cloudflare.com/cloudflare-main.gpg
     dest: /etc/apt/keyrings/cloudflare-main.gpg
     mode: "0644"
   tags: [cloudflared]
 
-- name: Dodaj repozytorium cloudflared
+- name: Add the cloudflared repository
   ansible.builtin.deb822_repository:
     name: cloudflared
     types: [deb]
@@ -65,14 +65,14 @@
     state: present
   tags: [cloudflared]
 
-- name: Zainstaluj cloudflared
+- name: Install cloudflared
   ansible.builtin.apt:
     name: cloudflared
     state: present
     update_cache: true
   tags: [cloudflared]
 
-- name: Utwórz katalog konfiguracji
+- name: Create the configuration directory
   ansible.builtin.file:
     path: "{{ cloudflared_config_dir }}"
     state: directory
@@ -83,7 +83,7 @@
 
 # Token w pliku środowiskowym, nie w linii polecenia jednostki - inaczej byłby
 # widoczny w `ps` dla każdego użytkownika maszyny.
-- name: Zapisz token tunelu
+- name: Write the tunnel token
   ansible.builtin.copy:
     dest: "{{ cloudflared_config_dir }}/env"
     owner: root
@@ -94,7 +94,7 @@
   notify: restart cloudflared
   tags: [cloudflared]
 
-- name: Zainstaluj jednostkę systemd
+- name: Install the systemd unit
   ansible.builtin.copy:
     dest: /etc/systemd/system/cloudflared.service
     mode: "0644"
@@ -127,7 +127,7 @@
     - restart cloudflared
   tags: [cloudflared]
 
-- name: Włącz cloudflared
+- name: Enable cloudflared
   ansible.builtin.systemd_service:
     name: cloudflared
     state: started
@@ -136,7 +136,7 @@
   tags: [cloudflared]
 
 # Tunel zestawia się wychodząco, więc "uruchomiony" nie znaczy jeszcze "połączony".
-- name: Sprawdź, czy usługa się utrzymuje
+- name: Check that the service stays up
   ansible.builtin.command: systemctl is-active cloudflared
   register: cf_active
   changed_when: false

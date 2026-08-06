@@ -1,4 +1,4 @@
-- name: Sprawdź zainstalowaną wersję k3s
+- name: Check the installed k3s version
   ansible.builtin.command: /usr/local/bin/k3s --version
   register: k3s_installed
   changed_when: false
@@ -8,7 +8,7 @@
 
 # K3S_URL przełącza instalator w tryb agenta i wskazuje control plane, K3S_TOKEN
 # uwierzytelnia dołączenie do klastra.
-- name: Zainstaluj agenta i dołącz do klastra
+- name: Install the agent and join the cluster
   ansible.builtin.command:
     cmd: "{{ k3s_install_script_path }}"
   environment:
@@ -21,7 +21,7 @@
   notify: restart k3s-agent
   tags: [k3s]
 
-- name: Włącz usługę k3s-agent
+- name: Enable the k3s-agent service
   ansible.builtin.systemd_service:
     name: k3s-agent
     state: started
@@ -33,7 +33,7 @@
 # liczba węzłów może się zgadzać z inventory. run_once wystarczy, bo strategia
 # linear uruchamia to zadanie dopiero po instalacji na wszystkich agentach,
 # a delegate_to - bo kubectl działa tylko na control plane.
-- name: Sprawdź, czy wszystkie węzły klastra są gotowe
+- name: Check that all cluster nodes are ready
   ansible.builtin.command: k3s kubectl get nodes --no-headers
   register: k3s_nodes
   changed_when: false

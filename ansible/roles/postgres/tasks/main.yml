@@ -2,19 +2,19 @@
 # na tej samej maszynie (3 GB RAM), więc obie role muszą się zmieścić w jednym
 # budżecie pamięci - patrz komentarze w defaults/main.yml obu ról.
 
-- name: Otwórz porty bazy i eksportera
+- name: Open database and exporter ports
   ansible.builtin.include_role:
     name: security
     tasks_from: open_ports
   vars:
     ports:
-      - { port: "{{ postgres_port }}", from: "{{ k3s_subnet }}", comment: "Postgres z klastra" }
+      - { port: "{{ postgres_port }}", from: "{{ k3s_subnet }}", comment: "Postgres from the cluster" }
       # pg_dump w jobie backupowym Jenkinsa - pojedynczy adres CI/CD, nie cały segment.
-      - { port: "{{ postgres_port }}", from: "{{ cicd_ip }}", comment: "Postgres dla kopii z CI/CD" }
+      - { port: "{{ postgres_port }}", from: "{{ cicd_ip }}", comment: "Postgres for CI/CD backups" }
       - { port: "{{ postgres_exporter_port }}", from: "{{ monitoring_ip }}", comment: "postgres_exporter" }
   tags: [postgres]
 
-- name: Utwórz katalog na klucze APT
+- name: Create the APT keyring directory
   ansible.builtin.file:
     path: /etc/apt/keyrings
     state: directory
@@ -25,14 +25,14 @@
 # przy nim do końca wsparcia. PGDG daje wersję 18 i wypuszcza poprawki
 # bezpieczeństwa w dniu wydania upstreamu, więc nie jesteśmy zależni od cyklu
 # backportów dystrybucji.
-- name: Pobierz klucz GPG PGDG
+- name: Download the PGDG GPG key
   ansible.builtin.get_url:
     url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
     dest: /etc/apt/keyrings/postgresql.asc
     mode: "0644"
   tags: [postgres]
 
-- name: Dodaj repozytorium PGDG
+- name: Add the PGDG repository
   ansible.builtin.deb822_repository:
     name: pgdg
     types: [deb]
@@ -47,7 +47,7 @@
 # psycopg2 nie jest wygodą, tylko wymogiem - bez niego moduły community.postgresql
 # nie mają czym rozmawiać z bazą. acl pozwala przekazać plik tymczasowy do
 # `become_user: postgres` bez rozluźniania uprawnień w /tmp.
-- name: Zainstaluj Postgresa i zależności
+- name: Install Postgres and dependencies
   ansible.builtin.apt:
     name:
       - "postgresql-{{ postgres_version }}"
@@ -58,7 +58,7 @@
     update_cache: true
   tags: [postgres]
 
-- name: Utwórz katalog dokładek konfiguracji
+- name: Create the configuration drop-in directory
   ansible.builtin.file:
     path: "/etc/postgresql/{{ postgres_version }}/main/conf.d"
     state: directory
@@ -67,7 +67,7 @@
     mode: "0755"
   tags: [postgres]
 
-- name: Wygeneruj strojenie
+- name: Generate tuning config
   ansible.builtin.template:
     src: tuning.conf.j2
     dest: "/etc/postgresql/{{ postgres_version }}/main/conf.d/10-wolffire.conf"
@@ -77,7 +77,7 @@
   notify: restart postgres
   tags: [postgres]
 
-- name: Wygeneruj pg_hba
+- name: Generate pg_hba
   ansible.builtin.template:
     src: pg_hba.conf.j2
     dest: "/etc/postgresql/{{ postgres_version }}/main/pg_hba.conf"
@@ -87,7 +87,7 @@
   notify: reload postgres
   tags: [postgres]
 
-- name: Włącz Postgresa
+- name: Enable Postgres
   ansible.builtin.systemd_service:
     name: postgresql
     state: started
@@ -97,11 +97,11 @@
 # Kolejne zadania łączą się z bazą. Bez wymuszenia handlerów leciałyby na
 # konfiguracji sprzed szablonu - w skrajnym przypadku tworząc hasło algorytmem
 # innym niż wymaga pg_hba.
-- name: Zastosuj zmiany konfiguracji przed pracą na bazie
+- name: Apply configuration changes before working on the database
   ansible.builtin.meta: flush_handlers
   tags: [postgres]
 
-- name: Utwórz użytkownika aplikacji
+- name: Create the application user
   community.postgresql.postgresql_user:
     name: "{{ postgres_db_user }}"
     password: "{{ wolffire_db_password }}"
@@ -113,7 +113,7 @@
   no_log: true
   tags: [postgres]
 
-- name: Utwórz bazę aplikacji
+- name: Create the application database
   community.postgresql.postgresql_db:
     name: "{{ postgres_db_name }}"
     owner: "{{ postgres_db_user }}"
@@ -126,7 +126,7 @@
 # Domyślnie każda rola w bazie ma prawo CREATE w schemacie public. W Postgresie
 # 15+ jest to już odebrane, ale samo CONNECT do nowej bazy nadal przysługuje
 # wszystkim - odbieramy je, żeby rola eksportera nie widziała danych aplikacji.
-- name: Odbierz publiczny dostęp do bazy aplikacji
+- name: Revoke public access to the application database
   community.postgresql.postgresql_privs:
     database: "{{ postgres_db_name }}"
     type: database
@@ -138,7 +138,7 @@
   become_user: postgres
   tags: [postgres]
 
-- name: Utwórz rolę eksportera metryk
+- name: Create the metrics exporter role
   community.postgresql.postgresql_user:
     name: "{{ postgres_exporter_system_user }}"
     role_attr_flags: LOGIN,NOSUPERUSER,NOCREATEDB,NOCREATEROLE
@@ -150,7 +150,7 @@
 # pg_monitor to wbudowana rola dająca wgląd w statystyki i widoki systemowe bez
 # prawa czytania danych. Nadanie eksporterowi superusera byłoby prostsze
 # i oznaczałoby konto z pełną władzą nad bazą wystawione na porcie metryk.
-- name: Nadaj eksporterowi uprawnienia pg_monitor
+- name: Grant pg_monitor privileges to the exporter
   community.postgresql.postgresql_membership:
     group: pg_monitor
     target_roles: "{{ postgres_exporter_system_user }}"
@@ -165,7 +165,7 @@
 # konto systemowe i poprawki bezpieczeństwa razem z unattended-upgrades - dla
 # procesu, który tylko odpytuje lokalną bazę, to mniej ruchomych części niż
 # własna binarka pobierana z GitHuba.
-- name: Zainstaluj postgres_exporter
+- name: Install postgres_exporter
   ansible.builtin.apt:
     name: prometheus-postgres-exporter
     state: present
@@ -176,14 +176,14 @@
 # Jednostka z pakietu startuje jako konto systemowe - pg_hba ufa mu metodą peer,
 # więc nazwa musi się zgadzać. Pinujemy ją jawnie, żeby zmiana w pakiecie nie
 # zerwała po cichu uwierzytelnienia eksportera.
-- name: Utwórz katalog dokładek jednostki eksportera
+- name: Create the exporter unit drop-in directory
   ansible.builtin.file:
     path: /etc/systemd/system/prometheus-postgres-exporter.service.d
     state: directory
     mode: "0755"
   tags: [postgres]
 
-- name: Wymuś konto systemowe eksportera
+- name: Enforce the exporter system account
   ansible.builtin.copy:
     dest: /etc/systemd/system/prometheus-postgres-exporter.service.d/10-user.conf
     mode: "0644"
@@ -194,7 +194,7 @@
   notify: restart postgres_exporter
   tags: [postgres]
 
-- name: Skonfiguruj postgres_exporter
+- name: Configure postgres_exporter
   ansible.builtin.copy:
     dest: /etc/default/prometheus-postgres-exporter
     mode: "0644"
@@ -208,7 +208,7 @@
   notify: restart postgres_exporter
   tags: [postgres]
 
-- name: Włącz postgres_exporter
+- name: Enable postgres_exporter
   ansible.builtin.systemd_service:
     name: prometheus-postgres-exporter
     state: started
@@ -216,14 +216,14 @@
     daemon_reload: true
   tags: [postgres]
 
-- name: Zastosuj zmiany przed weryfikacją
+- name: Apply changes before verification
   ansible.builtin.meta: flush_handlers
   tags: [postgres]
 
 # Weryfikacja kończąca rolę. Sam fakt, że systemd uznał usługę za "running", nie
 # mówi nic o tym, czy baza przyjmuje połączenia na właściwym adresie - a właśnie
 # tam łączy się klaster.
-- name: Sprawdź, że Postgres odpowiada na adresie wewnętrznym
+- name: Check that Postgres responds on the internal address
   ansible.builtin.command:
     cmd: "pg_isready -h {{ private_ip }} -p {{ postgres_port }}"
   register: pg_ready
@@ -239,7 +239,7 @@
 # `pg_up 1` to jedyny dowód, że eksporter nie tylko wstał, ale i zalogował się
 # do bazy. Sam kod 200 zwróciłby również eksporter z błędną konfiguracją
 # połączenia - w Grafanie objawiłoby się to pustym dashboardem.
-- name: Sprawdź, że eksporter zwraca metryki bazy
+- name: Check that the exporter returns database metrics
   ansible.builtin.uri:
     url: "http://{{ private_ip }}:{{ postgres_exporter_port }}/metrics"
     return_content: true

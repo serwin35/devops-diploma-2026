@@ -8,7 +8,7 @@
 #
 # Nazwa hosta w inventory (proxmox-1) jest wyłącznie aliasem dla SSH i nie musi
 # odpowiadać nazwie węzła w Proxmoxie.
-- name: Ustaw hostname zgodny z nazwą w inventory
+- name: Set the hostname to match the inventory name
   ansible.builtin.hostname:
     name: "{{ inventory_hostname }}"
   when: "'proxmox' not in group_names"
@@ -16,7 +16,7 @@
 
 # Bez tego wpisu sudo przy każdym wywołaniu próbuje rozwiązać nazwę hosta
 # i czeka na timeout DNS-u.
-- name: Zwiąż hostname z adresem pętli zwrotnej
+- name: Bind the hostname to the loopback address
   ansible.builtin.lineinfile:
     path: /etc/hosts
     regexp: '^127\.0\.1\.1\s'

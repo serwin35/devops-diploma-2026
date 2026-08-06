@@ -1,4 +1,4 @@
-- name: Zainstaluj Helma
+- name: Install Helm
   ansible.builtin.unarchive:
     src: "https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz"
     dest: /usr/local/bin
@@ -10,7 +10,7 @@
 # Chart kopiowany z repozytorium na serwer - pipeline CD robi potem tylko
 # `helm upgrade --set image.tag=<sha>`, więc nie musi znać żadnych sekretów
 # aplikacji: te siedzą w values na maszynie (0600).
-- name: Skopiuj chart
+- name: Copy the chart
   ansible.builtin.copy:
     src: "{{ wolffire_chart_src }}/"
     dest: "{{ wolffire_chart_dest }}/"
@@ -20,7 +20,7 @@
 
 # CD wdraża konkretne tagi przez --set; Ansible nie może ich cofać do "latest"
 # przy każdym przebiegu. Jeśli release istnieje, przejmujemy wdrożony tag.
-- name: Odczytaj tag wdrożony przez CD
+- name: Read the tag deployed by CD
   ansible.builtin.shell: >-
     set -o pipefail;
     helm get values wolffire --kubeconfig /etc/rancher/k3s/k3s.yaml
@@ -34,13 +34,13 @@
   check_mode: false
   tags: [wolffire_prod]
 
-- name: Użyj wdrożonego tagu zamiast domyślnego
+- name: Use the deployed tag instead of the default
   ansible.builtin.set_fact:
     wolffire_image_tag: "{{ deployed_tag.stdout | trim }}"
   when: (deployed_tag.stdout | default('') | trim) != ''
   tags: [wolffire_prod]
 
-- name: Wygeneruj values produkcyjne
+- name: Generate production values
   ansible.builtin.template:
     src: values-prod.yaml.j2
     dest: "{{ wolffire_values_dest }}"
@@ -56,7 +56,7 @@
 # sekcję `config`, czyli wartości użyte przy wdrożeniu - a tam siedzą hasło do
 # bazy, hasło Redisa, klucz aplikacji i token do rejestru. Zarejestrowane
 # wylądowałyby w logu Ansible. `helm list` zwraca wyłącznie metadane release'u.
-- name: Sprawdź stan release'u
+- name: Check release state
   ansible.builtin.command: >-
     helm list --kubeconfig /etc/rancher/k3s/k3s.yaml
     -n {{ wolffire_namespace }} --filter '^wolffire$' --output json
@@ -74,7 +74,7 @@
 # i stan samego release'u. Efekt uboczny jest pożądany: przebieg Ansible nie
 # nadpisuje już tagu obrazu wdrożonego przez CD (`helm upgrade --set image.tag`),
 # bo values na dysku się nie zmieniły.
-- name: Wdróż aplikację
+- name: Deploy the application
   ansible.builtin.command: >-
     helm upgrade --install wolffire {{ wolffire_chart_dest }}
     --kubeconfig /etc/rancher/k3s/k3s.yaml
@@ -94,7 +94,7 @@
 # nieosiągalny, brak kubeconfigu), potok i tak kończył się kodem 0, `wc -l`
 # drukowało "0" i zadanie meldowało "wszystkie pody działają" przy LEŻĄCYM
 # klastrze. Pusty wynik traktujemy jako błąd - brak podów to nie jest stan zdrowy.
-- name: Sprawdź, czy pody działają
+- name: Check that pods are running
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
@@ -112,7 +112,7 @@
   check_mode: false
   tags: [wolffire_prod]
 
-- name: Sprawdź odpowiedź aplikacji przez Traefik
+- name: Check the application response through Traefik
   ansible.builtin.uri:
     url: "http://{{ private_ip }}/up"
     headers:

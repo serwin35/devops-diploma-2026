@@ -2,13 +2,13 @@
 # Stoi na tej samej maszynie co Postgres (3 GB RAM) - podział pamięci opisany
 # w defaults/main.yml.
 
-- name: Otwórz porty Redisa i eksportera
+- name: Open Redis and exporter ports
   ansible.builtin.include_role:
     name: security
     tasks_from: open_ports
   vars:
     ports:
-      - { port: "{{ redis_port }}", from: "{{ k3s_subnet }}", comment: "Redis z klastra" }
+      - { port: "{{ redis_port }}", from: "{{ k3s_subnet }}", comment: "Redis from the cluster" }
       - { port: "{{ redis_exporter_port }}", from: "{{ monitoring_ip }}", comment: "redis_exporter" }
   tags: [redis]
 
@@ -16,7 +16,7 @@
 # potrzebujemy. Dodawanie repozytorium packages.redis.io dałoby wersję 8.x
 # i wymagałoby pinowania pakietu, żeby `apt upgrade` nie przeszedł po cichu
 # na kolejną wersję major pod działającymi kolejkami.
-- name: Zainstaluj Redisa
+- name: Install Redis
   ansible.builtin.apt:
     name: redis-server
     state: present
@@ -29,7 +29,7 @@
 # copy-on-write faktycznie zmieści się z zapasem. Objawia się to błędem
 # "Can't save in background: fork: Cannot allocate memory" i AOF, który rośnie
 # w nieskończoność, bo nigdy nie zostaje przepisany.
-- name: Pozwól jądru na nadmiarową alokację pamięci
+- name: Allow the kernel to overcommit memory
   ansible.posix.sysctl:
     name: vm.overcommit_memory
     value: "1"
@@ -40,7 +40,7 @@
 
 # Kolejka nasłuchu jądra musi być co najmniej równa tcp-backlog Redisa, inaczej
 # jest po cichu obcinana i przy skoku ruchu część połączeń z klastra odpada.
-- name: Podnieś kolejkę nasłuchu gniazd
+- name: Raise the socket listen backlog
   ansible.posix.sysctl:
     name: net.core.somaxconn
     value: "511"
@@ -49,7 +49,7 @@
     reload: true
   tags: [redis]
 
-- name: Wygeneruj konfigurację Redisa
+- name: Generate Redis configuration
   ansible.builtin.template:
     src: redis.conf.j2
     dest: /etc/redis/redis.conf
@@ -59,7 +59,7 @@
   notify: restart redis
   tags: [redis]
 
-- name: Włącz Redisa
+- name: Enable Redis
   ansible.builtin.systemd_service:
     name: redis-server
     state: started
@@ -73,7 +73,7 @@
 # nie wozi pakietu prometheus-redis-exporter - w przeciwieństwie do eksportera
 # Postgresa, którego bierzemy właśnie z repozytorium dystrybucji.
 
-- name: Utwórz konto systemowe eksportera
+- name: Create the exporter system account
   ansible.builtin.user:
     name: "{{ redis_exporter_user }}"
     system: true
@@ -85,7 +85,7 @@
 # Instalacja pod katalog z numerem wersji plus dowiązanie `current`: podbicie
 # redis_exporter_version pobiera nową binarkę i przełącza dowiązanie, zamiast
 # nadpisywać plik w miejscu. Powrót do poprzedniej wersji to zmiana zmiennej.
-- name: Utwórz katalog eksportera
+- name: Create the exporter directory
   ansible.builtin.file:
     path: "{{ redis_exporter_dir }}/{{ redis_exporter_version }}"
     state: directory
@@ -94,7 +94,7 @@
     mode: "0755"
   tags: [redis]
 
-- name: Pobierz i rozpakuj redis_exporter
+- name: Download and unpack redis_exporter
   ansible.builtin.unarchive:
     src: >-
       https://github.com/oliver006/redis_exporter/releases/download/v{{ redis_exporter_version
@@ -110,7 +110,7 @@
   notify: restart redis_exporter
   tags: [redis]
 
-- name: Przełącz dowiązanie na wybraną wersję
+- name: Switch the symlink to the selected version
   ansible.builtin.file:
     src: "{{ redis_exporter_dir }}/{{ redis_exporter_version }}"
     dest: "{{ redis_exporter_dir }}/current"
@@ -122,7 +122,7 @@
 # czytelna dla wszystkich (0644), a `systemctl show` i tak wypisuje każde
 # `Environment=` dowolnemu użytkownikowi - hasło Redisa trafiało tym samym
 # kanałem do logu Ansible przy zadaniu włączającym usługę.
-- name: Utwórz katalog konfiguracji eksportera
+- name: Create the exporter configuration directory
   ansible.builtin.file:
     path: "{{ redis_exporter_config_dir }}"
     state: directory
@@ -131,7 +131,7 @@
     mode: "0750"
   tags: [redis]
 
-- name: Zapisz hasło eksportera
+- name: Write the exporter password
   ansible.builtin.copy:
     dest: "{{ redis_exporter_config_dir }}/env"
     owner: root
@@ -142,7 +142,7 @@
   notify: restart redis_exporter
   tags: [redis]
 
-- name: Wygeneruj jednostkę eksportera
+- name: Generate the exporter unit
   ansible.builtin.template:
     src: redis_exporter.service.j2
     dest: /etc/systemd/system/redis_exporter.service
@@ -150,7 +150,7 @@
   notify: restart redis_exporter
   tags: [redis]
 
-- name: Włącz redis_exporter
+- name: Enable redis_exporter
   ansible.builtin.systemd_service:
     name: redis_exporter
     state: started
@@ -158,7 +158,7 @@
     daemon_reload: true
   tags: [redis]
 
-- name: Zastosuj zmiany przed weryfikacją
+- name: Apply changes before verification
   ansible.builtin.meta: flush_handlers
   tags: [redis]
 
@@ -170,7 +170,7 @@
 # jako `cmd`. Zmienna środowiskowa jest czytelna tylko dla właściciela procesu
 # i roota, i nie trafia do wyniku zadania. Znika przy okazji --no-auth-warning,
 # bo REDISCLI_AUTH nie wywołuje ostrzeżenia.
-- name: Sprawdź, że Redis odpowiada na adresie wewnętrznym
+- name: Check that Redis responds on the internal address
   ansible.builtin.command:
     cmd: "redis-cli -h {{ private_ip }} -p {{ redis_port }} ping"
   environment:
@@ -188,7 +188,7 @@
 # Sprawdzamy jednocześnie politykę eksmisji. To ustawienie decyduje o tym, czy
 # zadania w kolejce mogą zniknąć bez śladu, więc nie może zależeć od tego, czy
 # ktoś nie nadpisał konfiguracji ręcznie przez CONFIG SET.
-- name: Sprawdź, że polityka eksmisji chroni kolejki
+- name: Check that the eviction policy protects the queues
   ansible.builtin.command:
     cmd: "redis-cli -h {{ private_ip }} -p {{ redis_port }} config get maxmemory-policy"
   environment:
@@ -204,7 +204,7 @@
 # `redis_up 1` to jedyny dowód, że eksporter nie tylko wstał, ale i połączył się
 # z Redisem. Sam kod 200 zwróciłby również eksporter celujący w zły adres -
 # w Grafanie objawiłoby się to pustym dashboardem.
-- name: Sprawdź, że eksporter zwraca metryki Redisa
+- name: Check that the exporter returns Redis metrics
   ansible.builtin.uri:
     url: "http://{{ private_ip }}:{{ redis_exporter_port }}/metrics"
     return_content: true

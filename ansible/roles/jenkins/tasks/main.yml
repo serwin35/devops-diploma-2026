@@ -5,45 +5,45 @@
 # sprowadza się do zbudowania dwóch obrazów (kontroler z wtyczkami, agent
 # z narzędziami backupu) i uruchomienia kontenera; w UI nie ma nic do ustawienia.
 
-- name: Otwórz port interfejsu Jenkinsa
+- name: Open the Jenkins UI port
   ansible.builtin.include_role:
     name: security
     tasks_from: open_ports
   vars:
     ports:
-      - { port: "{{ jenkins_port }}", from: "{{ bastion_ip }}", comment: "Jenkins UI przez tunel" }
+      - { port: "{{ jenkins_port }}", from: "{{ bastion_ip }}", comment: "Jenkins UI via tunnel" }
   tags: [jenkins]
 
 # Klucze do S3 przychodzą ze środowiska (sops exec-env secrets.sops.yaml ...),
 # bo tam trzyma je reszta projektu - z tego samego pliku korzysta Terraform.
 # Pusta wartość oznacza uruchomienie playbooka z pominięciem sops i skończyłaby
 # się Jenkinsem z pustym poświadczeniem, czyli kopią walącą się dopiero w nocy.
-- name: Sprawdź, czy klucze do bucketa kopii są dostępne
+- name: Check that the backup bucket keys are available
   ansible.builtin.assert:
     that:
       - jenkins_backup_aws_access_key_id | length > 0
       - jenkins_backup_aws_secret_access_key | length > 0
     fail_msg: >-
-      Brak BACKUP_AWS_ACCESS_KEY_ID / BACKUP_AWS_SECRET_ACCESS_KEY w środowisku.
-      Uruchom playbook przez:
+      BACKUP_AWS_ACCESS_KEY_ID / BACKUP_AWS_SECRET_ACCESS_KEY missing from the environment.
+      Run the playbook via:
       sops exec-env secrets.sops.yaml 'cd ansible && ansible-playbook playbook.yml ...'
   tags: [jenkins]
 
 # Kontener działa jako użytkownik `jenkins`, a gniazdo Dockera należy do grupy
 # `docker` hosta. GID tej grupy różni się między maszynami, więc odczytujemy go,
 # zamiast wpisywać na sztywno.
-- name: Odczytaj grupę docker
+- name: Read the docker group
   ansible.builtin.getent:
     database: group
     key: docker
   tags: [jenkins]
 
-- name: Zapamiętaj identyfikator grupy docker
+- name: Record the docker group ID
   ansible.builtin.set_fact:
     docker_gid: "{{ ansible_facts.getent_group.docker[1] }}"
   tags: [jenkins]
 
-- name: Utwórz katalogi Jenkinsa
+- name: Create Jenkins directories
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -55,21 +55,21 @@
     - "{{ jenkins_dir }}/agent"
   tags: [jenkins]
 
-- name: Wygeneruj listę wtyczek
+- name: Generate the plugin list
   ansible.builtin.template:
     src: plugins.txt.j2
     dest: "{{ jenkins_dir }}/plugins.txt"
     mode: "0644"
   tags: [jenkins]
 
-- name: Wygeneruj Dockerfile kontrolera
+- name: Generate the controller Dockerfile
   ansible.builtin.template:
     src: Dockerfile.j2
     dest: "{{ jenkins_dir }}/Dockerfile"
     mode: "0644"
   tags: [jenkins]
 
-- name: Wygeneruj Dockerfile agenta
+- name: Generate the agent Dockerfile
   ansible.builtin.template:
     src: agent-Dockerfile.j2
     dest: "{{ jenkins_dir }}/agent/Dockerfile"
@@ -90,7 +90,7 @@
 # Przy tagu liczonym z treści nowy obraz dostaje nową nazwę, stary zostaje
 # nietknięty do czasu przełączenia kontenera, a zmiana Dockerfile albo listy
 # wtyczek sama z siebie wymusza przebudowę i podmianę kontenera przez Compose.
-- name: Wylicz tagi obrazów
+- name: Compute image tags
   ansible.builtin.set_fact:
     jenkins_image: >-
       {{ jenkins_image_repo }}:{{ (lookup('template', 'Dockerfile.j2')
@@ -104,21 +104,21 @@
 # rebuild: never - obraz o danym tagu jest z definicji zawsze taki sam, więc
 # powtórne budowanie niczego by nie zmieniło, a kosztuje kilka minut przy każdym
 # przebiegu playbooka.
-- name: Zbuduj obraz kontrolera
+- name: Build the controller image
   community.docker.docker_image_build:
     name: "{{ jenkins_image }}"
     path: "{{ jenkins_dir }}"
     rebuild: never
   tags: [jenkins]
 
-- name: Zbuduj obraz agenta
+- name: Build the agent image
   community.docker.docker_image_build:
     name: "{{ jenkins_agent_image }}"
     path: "{{ jenkins_dir }}/agent"
     rebuild: never
   tags: [jenkins]
 
-- name: Wygeneruj kod zadania backupowego
+- name: Generate the backup job code
   ansible.builtin.template:
     src: backup-pipeline.groovy.j2
     dest: "{{ jenkins_dir }}/backup-pipeline.groovy"
@@ -129,7 +129,7 @@
 # 0644, nie 0600: plik czyta proces w kontenerze działający jako uid 1000.
 # Sekretów tu nie ma - hasło administratora i poświadczenia zadania wchodzą
 # zmiennymi środowiskowymi z compose.yml, tu zostają same placeholdery ${...}.
-- name: Wygeneruj konfigurację JCasC
+- name: Generate JCasC configuration
   ansible.builtin.template:
     src: jenkins.yaml.j2
     dest: "{{ jenkins_dir }}/jenkins.yaml"
@@ -137,7 +137,7 @@
   notify: restart jenkins
   tags: [jenkins]
 
-- name: Wygeneruj compose
+- name: Generate compose
   ansible.builtin.template:
     src: compose.yml.j2
     dest: "{{ jenkins_dir }}/compose.yml"
@@ -149,7 +149,7 @@
 
 # Bez `build:` - obrazy są już zbudowane wyżej. Compose odpowiada wyłącznie
 # za uruchomienie kontenera z gotowego tagu.
-- name: Uruchom Jenkinsa
+- name: Start Jenkins
   community.docker.docker_compose_v2:
     project_src: "{{ jenkins_dir }}"
     state: present
@@ -157,7 +157,7 @@
 
 # Weryfikacja ma sprawdzić konfigurację, którą właśnie wgraliśmy, a nie tę
 # sprzed zmiany - handlery muszą pójść przed sprawdzeniem.
-- name: Wykonaj odłożone restarty
+- name: Run deferred restarts
   ansible.builtin.meta: flush_handlers
   tags: [jenkins]
 
@@ -165,7 +165,7 @@
 # uwierzytelnienie. Liczy się odpowiedź aplikacji, nie jej treść. Pierwszy start
 # po przebudowie obrazu potrafi trwać ponad minutę (rozpakowanie wtyczek),
 # stąd długie okno prób.
-- name: Poczekaj na Jenkinsa
+- name: Wait for Jenkins
   ansible.builtin.uri:
     url: "http://{{ private_ip }}:{{ jenkins_port }}/login"
     status_code: [200, 403]
@@ -181,7 +181,7 @@
 # i bez chmury agentów. Bez tego sprawdzenia playbook kończyłby się zielono przy
 # instancji, która nie robi tego, co opisuje ten katalog. Log kontenera jest
 # jedynym źródłem tej informacji, które nie wymaga logowania się do API.
-- name: Sprawdź, czy JCasC i wtyczki wstały bez błędów
+- name: Check that JCasC and plugins came up without errors
   ansible.builtin.command:
     cmd: docker logs --since 15m jenkins
   register: jenkins_boot_log

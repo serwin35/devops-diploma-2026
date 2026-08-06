@@ -1,4 +1,4 @@
-- name: Dopisz trasy statyczne
+- name: Add static routes
   ansible.builtin.template:
     src: routes.yaml.j2
     dest: /etc/netplan/60-trasy-wewnetrzne.yaml
@@ -7,13 +7,13 @@
   register: routes_config
   tags: [routes, network]
 
-- name: Zastosuj konfigurację sieci
+- name: Apply network configuration
   ansible.builtin.command: netplan apply
   when: routes_config.changed
   changed_when: true
   tags: [routes, network]
 
-- name: Sprawdź, czy trasa istnieje
+- name: Check that the route exists
   ansible.builtin.command: "ip route get {{ extra_routes[0].to | ansible.utils.ipaddr('address') | default('10.0.120.20') }}"
   register: route_check
   changed_when: false

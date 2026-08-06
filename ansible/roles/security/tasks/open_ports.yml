@@ -6,7 +6,7 @@
 # wyłącznie jedną z list - Ansible nie scala zmiennych o tej samej nazwie,
 # tylko jedna po cichu wygrywa. Objawiało się to celem "DOWN" w Prometheusie
 # przy poprawnie działającej usłudze.
-- name: Dopuść porty w UFW
+- name: Allow ports in UFW
   community.general.ufw:
     rule: allow
     port: "{{ item.port | string }}"

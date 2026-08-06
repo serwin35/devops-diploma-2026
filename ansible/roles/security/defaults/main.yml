@@ -20,7 +20,7 @@ docker_bridge_cidr: 172.16.0.0/12
 ufw_allowed:
   - { port: "{{ ssh_port }}", proto: tcp, comment: "SSH" }
   - { port: 9100, proto: tcp, from: "{{ monitoring_ip }}", comment: "node_exporter" }
-  - { port: 9100, proto: tcp, from: "{{ docker_bridge_cidr }}", comment: "node_exporter z kontenera" }
+  - { port: 9100, proto: tcp, from: "{{ docker_bridge_cidr }}", comment: "node_exporter from containers" }
 
 # Dokładki per grupa - definiowane w group_vars, doklejane do listy powyżej.
 ufw_extra: []

@@ -1,4 +1,4 @@
-- name: Zainstaluj zależności repozytorium
+- name: Install repository dependencies
   ansible.builtin.apt:
     name:
       - ca-certificates
@@ -9,21 +9,21 @@
     cache_valid_time: 3600
   tags: [docker]
 
-- name: Utwórz katalog na klucze APT
+- name: Create the APT keyring directory
   ansible.builtin.file:
     path: /etc/apt/keyrings
     state: directory
     mode: "0755"
   tags: [docker]
 
-- name: Pobierz klucz GPG Dockera
+- name: Download the Docker GPG key
   ansible.builtin.get_url:
     url: "https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg"
     dest: /etc/apt/keyrings/docker.asc
     mode: "0644"
   tags: [docker]
 
-- name: Dodaj repozytorium Dockera
+- name: Add the Docker repository
   ansible.builtin.deb822_repository:
     name: docker
     types: [deb]
@@ -36,7 +36,7 @@
     state: present
   tags: [docker]
 
-- name: Zainstaluj Docker Engine wraz z wtyczką compose
+- name: Install Docker Engine with the compose plugin
   ansible.builtin.apt:
     name:
       - docker-ce
@@ -48,7 +48,7 @@
     update_cache: true
   tags: [docker]
 
-- name: Skonfiguruj demona
+- name: Configure the daemon
   ansible.builtin.copy:
     dest: /etc/docker/daemon.json
     mode: "0644"
@@ -66,14 +66,14 @@
   notify: restart docker
   tags: [docker]
 
-- name: Włącz Dockera
+- name: Enable Docker
   ansible.builtin.service:
     name: docker
     state: started
     enabled: true
   tags: [docker]
 
-- name: Dopisz konta do grupy docker
+- name: Add accounts to the docker group
   ansible.builtin.user:
     name: "{{ item }}"
     groups: docker
@@ -84,7 +84,7 @@
 # cAdvisor zbiera metryki kontenerów, więc należy do tej roli, a nie do
 # observability - tamta leci na wszystkich maszynach, także tych bez Dockera,
 # i próbowała uruchomić kontener zanim demon w ogóle istniał.
-- name: Uruchom cAdvisor
+- name: Start cAdvisor
   community.docker.docker_container:
     name: cadvisor
     image: "{{ cadvisor_image }}"
@@ -103,14 +103,14 @@
     privileged: true
   tags: [docker]
 
-- name: Otwórz porty metryk kontenerów
+- name: Open container metrics ports
   ansible.builtin.include_role:
     name: security
     tasks_from: open_ports
   vars:
     ports:
       - { port: "{{ cadvisor_port }}", from: "{{ monitoring_ip }}", comment: "cAdvisor" }
-      - { port: "{{ cadvisor_port }}", from: "{{ docker_bridge_cidr }}", comment: "cAdvisor z kontenera" }
-      - { port: "{{ docker_metrics_port }}", from: "{{ monitoring_ip }}", comment: "metryki demona Dockera" }
-      - { port: "{{ docker_metrics_port }}", from: "{{ docker_bridge_cidr }}", comment: "metryki demona z kontenera" }
+      - { port: "{{ cadvisor_port }}", from: "{{ docker_bridge_cidr }}", comment: "cAdvisor from containers" }
+      - { port: "{{ docker_metrics_port }}", from: "{{ monitoring_ip }}", comment: "Docker daemon metrics" }
+      - { port: "{{ docker_metrics_port }}", from: "{{ docker_bridge_cidr }}", comment: "daemon metrics from containers" }
   tags: [docker]

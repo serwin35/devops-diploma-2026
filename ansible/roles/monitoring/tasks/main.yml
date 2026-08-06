@@ -1,4 +1,4 @@
-- name: Otwórz porty paneli
+- name: Open web UI ports
   ansible.builtin.include_role:
     name: security
     tasks_from: open_ports
@@ -7,12 +7,12 @@
       - { port: "{{ grafana_port }}", from: "{{ bastion_ip }}", comment: "Grafana" }
       - { port: "{{ prometheus_port }}", from: "{{ bastion_ip }}", comment: "Prometheus" }
       - { port: "{{ alertmanager_port }}", from: "{{ bastion_ip }}", comment: "Alertmanager" }
-      - { port: "{{ loki_port }}", from: "{{ bastion_ip }}", comment: "Loki - panel przez tunel" }
+      - { port: "{{ loki_port }}", from: "{{ bastion_ip }}", comment: "Loki - UI via tunnel" }
       # Alloy z każdej maszyny pcha tu logi - bez tego Loki widzi tylko siebie.
-      - { port: "{{ loki_port }}", from: "10.0.0.0/16", comment: "Loki - push z Alloy" }
+      - { port: "{{ loki_port }}", from: "10.0.0.0/16", comment: "Loki - push from Alloy" }
   tags: [monitoring]
 
-- name: Utwórz katalogi konfiguracji
+- name: Create configuration directories
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -28,7 +28,7 @@
     - "{{ monitoring_dir }}/grafana/provisioning/dashboards-provider"
   tags: [monitoring]
 
-- name: Wygeneruj konfigurację
+- name: Generate configuration
   ansible.builtin.template:
     src: "{{ item.src }}"
     dest: "{{ monitoring_dir }}/{{ item.dest }}"
@@ -55,7 +55,7 @@
 # ${DS_PROMETHEUS} i ${DS_LOKI}, które normalnie wypełnia kreator importu.
 # Przy provisioningu z pliku nikt ich nie wypełnia - trzeba podmienić na nazwy
 # źródeł zdefiniowanych w datasources.yml, inaczej panele zgłaszają błąd źródła.
-- name: Sprawdź, które dashboardy z grafana.com już leżą na dysku
+- name: Check which grafana.com dashboards are already on disk
   ansible.builtin.stat:
     path: "{{ monitoring_dir }}/grafana/provisioning/dashboards/{{ item.key }}.json"
   loop: "{{ grafana_dashboards | dict2items }}"
@@ -70,7 +70,7 @@
 # nazw źródeł danych - więc zawsze się różni i zawsze schodzi na nowo. Skutkiem
 # był restart Grafany przy KAŻDYM przebiegu playbooka, mimo że nic się nie zmieniło.
 # Aktualizacja dashboardu: skasować plik i uruchomić rolę ponownie.
-- name: Pobierz brakujące dashboardy
+- name: Download missing dashboards
   ansible.builtin.get_url:
     url: "https://grafana.com/api/dashboards/{{ item.item.value }}/revisions/latest/download"
     dest: "{{ monitoring_dir }}/grafana/provisioning/dashboards/{{ item.item.key }}.json"
@@ -84,7 +84,7 @@
   delay: 3
   tags: [monitoring]
 
-- name: Podmień placeholder źródła Prometheusa
+- name: Replace the Prometheus datasource placeholder
   ansible.builtin.replace:
     path: "{{ monitoring_dir }}/grafana/provisioning/dashboards/{{ item }}.json"
     regexp: '\$\{DS_PROMETHEUS\}'
@@ -93,7 +93,7 @@
   notify: restart grafana
   tags: [monitoring]
 
-- name: Podmień placeholder źródła Loki
+- name: Replace the Loki datasource placeholder
   ansible.builtin.replace:
     path: "{{ monitoring_dir }}/grafana/provisioning/dashboards/{{ item }}.json"
     regexp: '\$\{DS_LOKI\}'
@@ -105,7 +105,7 @@
 # Część dashboardów używa zmiennej szablonowej ${datasource} zamiast placeholdera
 # importu. Przy provisioningu ta zmienna nie ma wartości domyślnej i panele
 # zgłaszają "datasource not found".
-- name: Podmień zmienną szablonową datasource
+- name: Replace the datasource template variable
   ansible.builtin.replace:
     path: "{{ monitoring_dir }}/grafana/provisioning/dashboards/{{ item }}.json"
     regexp: '"\$\{datasource\}"'
@@ -114,7 +114,7 @@
   notify: restart grafana
   tags: [monitoring]
 
-- name: Wgraj własne dashboardy
+- name: Upload custom dashboards
   ansible.builtin.template:
     src: "{{ item.src }}"
     dest: "{{ monitoring_dir }}/grafana/provisioning/dashboards/{{ item.dest }}"
@@ -130,14 +130,14 @@
   notify: restart grafana
   tags: [monitoring]
 
-- name: Usuń dashboardy niepasujące do naszego schematu etykiet
+- name: Remove dashboards that do not match our label schema
   ansible.builtin.file:
     path: "{{ monitoring_dir }}/grafana/provisioning/dashboards/loki-logs.json"
     state: absent
   notify: restart grafana
   tags: [monitoring]
 
-- name: Wgraj szablon wiadomości alertu
+- name: Upload the alert message template
   ansible.builtin.template:
     src: calert-message.tmpl.j2
     dest: "{{ monitoring_dir }}/calert/message.tmpl"
@@ -147,7 +147,7 @@
   notify: restart calert
   tags: [monitoring]
 
-- name: Wygeneruj compose
+- name: Generate compose
   ansible.builtin.template:
     src: compose.yml.j2
     dest: "{{ monitoring_dir }}/compose.yml"
@@ -156,7 +156,7 @@
   notify: restart monitoring
   tags: [monitoring]
 
-- name: Uruchom stos monitoringu
+- name: Start the monitoring stack
   community.docker.docker_compose_v2:
     project_src: "{{ monitoring_dir }}"
     state: present
@@ -165,7 +165,7 @@
 
 # Sprawdzenie, że Prometheus faktycznie wstał i przyjął konfigurację - bez tego
 # błąd w szablonie ujawniłby się dopiero przy braku alertu.
-- name: Poczekaj na Prometheusa
+- name: Wait for Prometheus
   ansible.builtin.uri:
     url: "http://{{ private_ip }}:{{ prometheus_port }}/-/ready"
     status_code: [200]
@@ -176,7 +176,7 @@
   changed_when: false
   tags: [monitoring]
 
-- name: Poczekaj na Grafanę
+- name: Wait for Grafana
   ansible.builtin.uri:
     url: "http://{{ private_ip }}:{{ grafana_port }}/api/health"
     status_code: [200]

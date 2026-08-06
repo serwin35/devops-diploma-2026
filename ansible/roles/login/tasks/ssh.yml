@@ -11,7 +11,7 @@
 # a port ustawia override ssh.socket wsiany przez cloud-init. Host to Debian 13
 # z klasycznym ssh.service. Poniższe dyrektywy działają tak samo w obu przypadkach,
 # bo żadna nie dotyczy portu.
-- name: Wyłącz logowanie roota i uwierzytelnianie hasłem
+- name: Disable root login and password authentication
   ansible.builtin.copy:
     dest: /etc/ssh/sshd_config.d/00-login-hardening.conf
     mode: "0644"
@@ -30,7 +30,7 @@
 # domyślnie pomijane, a wtedy siatka bezpieczeństwa poniżej nie ma danych
 # i przebieg kończy się fałszywym błędem. Walidacja niczego nie modyfikuje,
 # więc może iść również w trybie sprawdzania.
-- name: Sprawdź konfigurację sshd
+- name: Validate sshd configuration
   ansible.builtin.command: /usr/sbin/sshd -t
   changed_when: false
   check_mode: false
@@ -43,7 +43,7 @@
 # dopasowaniu, zamyka potok i wysyła SIGPIPE do sshd, co przy pipefail zamienia
 # UDANE sprawdzenie w błąd. Fałszywy alarm w checku bezpieczeństwa jest gorszy
 # niż brak checku, bo uczy ignorowania jego wyniku.
-- name: Odczytaj porty, na których nasłuchuje sshd
+- name: Read the ports sshd listens on
   ansible.builtin.shell: >-
     /usr/sbin/sshd -T 2>/dev/null | grep -E '^port ' ;
     systemctl show ssh.socket -p Listen 2>/dev/null
@@ -54,15 +54,15 @@
   # cały playbook, mimo że na maszynie wszystko jest w porządku.
   check_mode: false
 
-- name: Upewnij się, że sshd nasłuchuje na porcie {{ ssh_port }}
+- name: Ensure sshd listens on port {{ ssh_port }}
   ansible.builtin.assert:
     that: ssh_port | string in sshd_listen.stdout
     fail_msg: >-
-      sshd nie nasłuchuje na porcie {{ ssh_port }}. Restart usługi odciąłby
-      dostęp do maszyny. Odczytano: {{ sshd_listen.stdout | trim }}
-    success_msg: "sshd nasłuchuje na porcie {{ ssh_port }}"
+      sshd is not listening on port {{ ssh_port }}. Restarting the service would
+      cut off access to the machine. Observed: {{ sshd_listen.stdout | trim }}
+    success_msg: "sshd is listening on port {{ ssh_port }}"
 
-- name: Usuń poprzedni plik utwardzenia (niższy priorytet)
+- name: Remove the previous hardening file (lower priority)
   ansible.builtin.file:
     path: /etc/ssh/sshd_config.d/90-hardening.conf
     state: absent
