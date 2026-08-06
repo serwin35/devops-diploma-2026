@@ -43,6 +43,24 @@ resource "aws_s3_bucket_public_access_block" "app_storage" {
   restrict_public_buckets = true
 }
 
+# Livewire przy dysku s3 wysyła pliki bezpośrednio z przeglądarki do bucketa
+# (presigned URL) - żądanie idzie z originu aplikacji, więc bez CORS przeglądarka
+# je zablokuje i upload w UI po prostu nie działa. Presigned URL nie wymaga
+# publicznego dostępu - podpis autoryzuje pojedyncze żądanie, public access
+# block zostaje w mocy.
+resource "aws_s3_bucket_cors_configuration" "app_storage" {
+  provider = aws.app_storage
+  bucket   = aws_s3_bucket.app_storage.id
+
+  cors_rule {
+    allowed_origins = ["https://wolffire.dev"]
+    allowed_methods = ["PUT", "POST", "GET"]
+    allowed_headers = ["*"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3600
+  }
+}
+
 resource "aws_s3_bucket_lifecycle_configuration" "app_storage" {
   provider = aws.app_storage
   bucket   = aws_s3_bucket.app_storage.id
@@ -59,6 +77,23 @@ resource "aws_s3_bucket_lifecycle_configuration" "app_storage" {
 
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
+    }
+  }
+
+  # Tymczasowe uploady Livewire (przeglądarka -> presigned URL -> livewire-tmp/)
+  # są przenoszone do docelowej ścieżki przy zapisie formularza, ale porzucone
+  # (użytkownik zamknął kartę) zostają - na S3 Livewire nie sprząta ich
+  # niezawodnie. Doba wystarcza z ogromnym zapasem.
+  rule {
+    id     = "expire-livewire-tmp"
+    status = "Enabled"
+
+    filter {
+      prefix = "livewire-tmp/"
+    }
+
+    expiration {
+      days = 1
     }
   }
 }
