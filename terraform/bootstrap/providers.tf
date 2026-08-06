@@ -21,3 +21,15 @@ provider "aws" {
     }
   }
 }
+
+provider "aws" {
+  alias  = "app_storage"
+  region = var.app_storage_region
+
+  default_tags {
+    tags = {
+      managed_by = "terraform"
+      project    = "wolffire-diploma"
+    }
+  }
+}

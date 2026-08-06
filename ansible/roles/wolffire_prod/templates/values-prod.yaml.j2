@@ -15,6 +15,15 @@ app:
   key: "{{ wolffire_app_key }}"
   env: production
   url: https://{{ public_zone }}
+  # Pliki na S3: storage/app w podzie to emptyDir - ginie z podem, a repliki
+  # nie widzą nawzajem swoich plików. Bucket z terraform/bootstrap.
+  filesystemDisk: s3
+
+s3:
+  bucket: {{ wolffire_s3_bucket }}
+  region: {{ wolffire_s3_region }}
+  accessKeyId: "{{ wolffire_s3_access_key_id }}"
+  secretAccessKey: "{{ wolffire_s3_secret_access_key }}"
 
 db:
   host: {{ db_ip }}

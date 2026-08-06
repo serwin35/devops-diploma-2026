@@ -1,5 +1,11 @@
 public_zone: wolffire.dev
 
+# Pliki aplikacji w S3 (Laravel FILESYSTEM_DISK=s3 na produkcji).
+# Bucket i tożsamość tworzy terraform/bootstrap/storage.tf; klucze IAM
+# mieszkają w secrets.sops.yml (wolffire_s3_access_key_id / _secret_access_key).
+wolffire_s3_bucket: wolffire-app-storage
+wolffire_s3_region: eu-north-1
+
 ssh_port: 22022
 
 alert_channel: slack

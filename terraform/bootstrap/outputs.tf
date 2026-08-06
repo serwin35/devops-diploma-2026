@@ -21,6 +21,10 @@ output "credentials" {
       AWS_ACCESS_KEY_ID     = aws_iam_access_key.alertmanager.id
       AWS_SECRET_ACCESS_KEY = aws_iam_access_key.alertmanager.secret
     }
+    app_storage = {
+      AWS_ACCESS_KEY_ID     = aws_iam_access_key.app_storage.id
+      AWS_SECRET_ACCESS_KEY = aws_iam_access_key.app_storage.secret
+    }
   }
 }
 
@@ -40,6 +44,10 @@ output "buckets" {
     backups = {
       name   = aws_s3_bucket.backups.id
       region = var.backups_region
+    }
+    app_storage = {
+      name   = aws_s3_bucket.app_storage.id
+      region = var.app_storage_region
     }
   }
 }

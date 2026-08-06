@@ -33,6 +33,20 @@ variable "backup_retention_days" {
   description = "Po ilu dniach kopie są usuwane"
 }
 
+variable "app_storage_bucket" {
+  type        = string
+  nullable    = false
+  default     = "wolffire-app-storage"
+  description = "Bucket na pliki aplikacji (Laravel FILESYSTEM_DISK=s3)"
+}
+
+variable "app_storage_region" {
+  type        = string
+  nullable    = false
+  default     = "eu-north-1"
+  description = "Region plików aplikacji - jak kopie, blisko serwera OVH"
+}
+
 variable "alerts_email" {
   description = "Adres, na który SNS dostarcza alerty z Alertmanagera"
   type        = string

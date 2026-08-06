@@ -103,6 +103,11 @@ SESSION_LIFETIME: {{ .Values.app.sessionLifetime | quote }}
 BROADCAST_CONNECTION: "log"
 HORIZON_PREFIX: "wolffire_horizon:"
 FILESYSTEM_DISK: {{ .Values.app.filesystemDisk | quote }}
+{{- if eq .Values.app.filesystemDisk "s3" }}
+AWS_BUCKET: {{ required "Podaj s3.bucket przy filesystemDisk=s3" .Values.s3.bucket | quote }}
+AWS_DEFAULT_REGION: {{ .Values.s3.region | quote }}
+AWS_USE_PATH_STYLE_ENDPOINT: "false"
+{{- end }}
 MAIL_MAILER: "log"
 MAIL_FROM_ADDRESS: {{ .Values.mail.fromAddress | quote }}
 MAIL_FROM_NAME: "WolfFire"
@@ -124,6 +129,10 @@ instalację bez sekretów, zamiast wypuścić aplikację z pustym hasłem.
 APP_KEY: {{ required "Podaj app.key (APP_KEY Laravela, format base64:...)" .Values.app.key | quote }}
 DB_PASSWORD: {{ required "Podaj db.password" .Values.db.password | quote }}
 REDIS_PASSWORD: {{ required "Podaj redis.password" .Values.redis.password | quote }}
+{{- if eq .Values.app.filesystemDisk "s3" }}
+AWS_ACCESS_KEY_ID: {{ required "Podaj s3.accessKeyId przy filesystemDisk=s3" .Values.s3.accessKeyId | quote }}
+AWS_SECRET_ACCESS_KEY: {{ required "Podaj s3.secretAccessKey przy filesystemDisk=s3" .Values.s3.secretAccessKey | quote }}
+{{- end }}
 {{- end }}
 
 {{/*
