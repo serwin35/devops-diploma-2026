@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help secrets secrets-app aws host infra plan configure check status up fmt validate
+.PHONY: help secrets secrets-app bootstrap-aws bootstrap-host tf-plan tf-apply ansible-apply ansible-check status up fmt validate aws host infra plan configure check
 
 # SOPS na macOS szuka klucza w ~/Library/Application Support/sops/age/, a na Linuksie
 # w ~/.config/sops/age/. Wskazujemy ścieżkę XDG jawnie, żeby to samo repozytorium
@@ -15,9 +15,9 @@ PVE_TUNNEL := ssh -F ansible/ssh_config -O check wf-proxmox-1 2>/dev/null || \
 	ssh -F ansible/ssh_config -fN -L 18006:localhost:8006 wf-proxmox-1
 
 help: ## Lista dostępnych celów
-	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-aws: ## Krok zerowy AWS: buckety S3 i tożsamości IAM (stan lokalny, uruchamiany raz)
+bootstrap-aws: ## Krok zerowy AWS: buckety S3 i tożsamości IAM (stan lokalny, uruchamiany raz)
 	$(SOPS_ENV) 'terraform -chdir=terraform/bootstrap init && terraform -chdir=terraform/bootstrap apply'
 	@echo
 	@echo "Klucze do przeniesienia przez 'make secrets':"
@@ -31,14 +31,14 @@ secrets-app: ## Edycja sekretów wnętrza infrastruktury (hasła baz, Grafany, J
 
 # Ansible odpalamy z jego katalogu: tylko wtedy znajduje ansible.cfg i tylko wtedy
 # względne ścieżki do kluczy w ssh_config (../keys/...) wskazują na właściwe pliki.
-host: ## Krok zerowy: hardening hosta Proxmoxa (root:22, jednorazowo po instalacji OVH)
+bootstrap-host: ## Krok zerowy: hardening hosta Proxmoxa (root:22, jednorazowo po instalacji OVH)
 	cd ansible && ansible-playbook bootstrap-host.yml
 
-plan: ## Podgląd zmian w infrastrukturze
+tf-plan: ## Terraform: podgląd zmian w infrastrukturze (nic nie zmienia)
 	@$(PVE_TUNNEL)
 	$(SOPS_ENV) '$(TF) plan'
 
-infra: ## Terraform: sieć SDN, storage, firewall, maszyny wirtualne
+tf-apply: ## Terraform: zastosowanie zmian (sieć SDN, storage, firewall, maszyny)
 	@$(PVE_TUNNEL)
 	$(SOPS_ENV) '$(TF) apply'
 
@@ -49,10 +49,10 @@ infra: ## Terraform: sieć SDN, storage, firewall, maszyny wirtualne
 # LIMIT przyjmuje nazwy z inventory (monitoring-1), nie aliasy SSH (wf-...).
 ANSIBLE_ARGS = $(if $(LIMIT),--limit $(LIMIT)) $(if $(TAGS),--tags $(TAGS))
 
-configure: ## Ansible: konfiguracja maszyn (zawężanie: LIMIT=host TAGS=rola)
+ansible-apply: ## Ansible: zastosowanie playbooka (zawężanie: LIMIT=host TAGS=rola)
 	$(SOPS_ENV) 'cd ansible && ansible-playbook playbook.yml $(ANSIBLE_ARGS)'
 
-check: ## Ansible na sucho, z diffem (zawężanie: LIMIT=host TAGS=rola)
+ansible-check: ## Ansible na sucho, z diffem (zawężanie: LIMIT=host TAGS=rola)
 	$(SOPS_ENV) 'cd ansible && ansible-playbook playbook.yml --check --diff $(ANSIBLE_ARGS)'
 
 # Jeden rzut oka na zdrowie całości: węzły i pody produkcji, kontenery dev,
@@ -68,7 +68,7 @@ status: ## Szybki przegląd zdrowia: klaster, kontenery, odpowiedzi HTTP
 	@printf "prod  https://wolffire.dev      -> " ; curl -s -o /dev/null -w "%{http_code}\n" -L --max-time 10 https://wolffire.dev
 	@printf "dev   https://dev.wolffire.dev  -> " ; curl -s -o /dev/null -w "%{http_code}\n" -L --max-time 10 https://dev.wolffire.dev
 
-up: infra configure ## Pełne wdrożenie od zera
+up: tf-apply ansible-apply ## Pełne wdrożenie od zera (Terraform, potem Ansible)
 
 fmt: ## Formatowanie
 	$(TF) fmt -recursive
@@ -87,3 +87,13 @@ validate: ## Walidacja składni
 .PHONY: test-infra
 test-infra: ## Testy dymne infrastruktury (tylko odczyt, nic nie zmienia)
 	@./scripts/smoke-test.sh
+
+# Stare nazwy celów - zachowane jako aliasy, żeby nic nie zaskoczyło ręki
+# przyzwyczajonej do poprzednich komend. Nowe nazwy mówią wprost, które
+# narzędzie i który tryb (plan/apply) uruchamiają.
+aws: bootstrap-aws
+host: bootstrap-host
+plan: tf-plan
+infra: tf-apply
+configure: ansible-apply
+check: ansible-check

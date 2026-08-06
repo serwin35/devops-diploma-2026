@@ -12,7 +12,7 @@ konsekwencje scalenia do `main`.
 Stąd bierze się dwuznaczność, na którą łatwo trafić w dokumentacji: "push na
 `develop`" w [RUNBOOK §13](../RUNBOOK.md) dotyczy repozytorium **aplikacji**,
 bo tylko tam push uruchamia potok CI/CD. W repozytorium infrastruktury push nic
-nie wdraża - zmiany idą przez `make plan` i `make infra`.
+nie wdraża - zmiany idą przez `make tf-plan` i `make tf-apply`.
 
 > **Zweryfikowano na żywo** 2026-08-05: infrastruktura - 15 commitów na
 > `develop` scalonych przez PR nr 1 (270 plików, +16038/-1); aplikacja -
@@ -455,7 +455,7 @@ Traktuj sekret jako skompromitowany od momentu pushu i zacznij od rotacji:
    klucz SSH              -> usun z authorized_keys na WSZYSTKICH maszynach
    webhook Google Chat    -> usun integracje, utworz nowa
 2. Wprowadz nowa wartosc: sops secrets.sops.yaml
-3. Przewdroz: make infra / ansible-playbook, zaleznie od tego, co jej uzywa
+3. Przewdroz: make tf-apply / ansible-playbook, zaleznie od tego, co jej uzywa
 4. Dopiero teraz, opcjonalnie, wyczysc historie - bez kroku 1 to teatr
 5. Odnotuj incydent; przy kluczu AWS sprawdz CloudTrail pod katem uzycia
 ```

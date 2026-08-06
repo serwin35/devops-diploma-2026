@@ -26,23 +26,23 @@ a wszystko poza tymi trzema przypadkami uruchamiasz `ansible-playbook` wprost.
 
 | Cel | Kiedy | Co robi pod spodem |
 |---|---|---|
-| `make host` | Raz, po instalacji Proxmoxa z OVH | `cd ansible && ansible-playbook bootstrap-host.yml` |
-| `make check` | Przed każdym wdrożeniem: podgląd, nic nie zmienia | `sops exec-env secrets.sops.yaml 'cd ansible && ansible-playbook playbook.yml --check --diff'` |
-| `make configure` | Wdrożenie konfiguracji na maszyny | `sops exec-env secrets.sops.yaml 'cd ansible && ansible-playbook playbook.yml'` |
+| `make bootstrap-host` | Raz, po instalacji Proxmoxa z OVH | `cd ansible && ansible-playbook bootstrap-host.yml` |
+| `make ansible-check` | Przed każdym wdrożeniem: podgląd, nic nie zmienia | `sops exec-env secrets.sops.yaml 'cd ansible && ansible-playbook playbook.yml --check --diff'` |
+| `make ansible-apply` | Wdrożenie konfiguracji na maszyny | `sops exec-env secrets.sops.yaml 'cd ansible && ansible-playbook playbook.yml'` |
 
-Kolejność jest zamierzona: **`make check` przed `make configure`**, tak samo jak
-`make plan` przed `make infra` po stronie Terraforma. Zanim uwierzysz w wynik,
+Kolejność jest zamierzona: **`make ansible-check` przed `make ansible-apply`**, tak samo jak
+`make tf-plan` przed `make tf-apply` po stronie Terraforma. Zanim uwierzysz w wynik,
 przeczytaj [Kiedy `--check` kłamie](#kiedy---check-kłamie) - na węzłach k3s
 zobaczysz `changed` przy w pełni zbieżnym stanie.
 
 Trzy cele poboczne: `make up` (`infra` + `configure`, wdrożenie od zera),
 `make status` (przegląd zdrowia - węzły i pody k3s, kontenery dev, kody HTTP
 obu środowisk; czysty odczyt po SSH, bez Ansible, dobry zaraz po
-`make configure`) oraz `make secrets` / `make secrets-app` do edycji dwóch
+`make ansible-apply`) oraz `make secrets` / `make secrets-app` do edycji dwóch
 plików z sekretami - różnicę tłumaczy
 [Dwa niezależne strumienie sekretów](#dwa-niezależne-strumienie-sekretów).
 
-### Dlaczego `make host` nie ma `sops exec-env`
+### Dlaczego `make bootstrap-host` nie ma `sops exec-env`
 
 `bootstrap-host.yml` uruchamia się na **świeżym** hoście, na którym nie ma jeszcze
 ani użytkownika `terraform@pve`, ani tokenu API. To on ten token dopiero tworzy
@@ -51,7 +51,7 @@ czego odszyfrowywać. Playbook łączy się `root`em na porcie 22, a nie kontem
 `ansible` na 22022, bo żadne z nich jeszcze nie istnieje:
 
 ```bash
-make host                                                     # pierwszy przebieg, port 22
+make bootstrap-host                                                     # pierwszy przebieg, port 22
 cd ansible
 ansible-playbook bootstrap-host.yml -e bootstrap_ssh_port=22022   # kolejne, nowym portem
 ansible-playbook bootstrap-host.yml -e bootstrap_ssh_port=22022 \
@@ -85,7 +85,7 @@ cd ansible
 sops exec-env ../secrets.sops.yaml 'ansible-playbook playbook.yml'
 ```
 
-Albo krócej, z korzenia repozytorium: `make configure`.
+Albo krócej, z korzenia repozytorium: `make ansible-apply`.
 
 Przebieg to 13 plays w ustalonej
 kolejności: najpierw role wspólne na `all` (`hostname`, `login`, `security`,
@@ -182,7 +182,7 @@ ANSIBLE_STDOUT_CALLBACK=yaml sops exec-env ../secrets.sops.yaml \
 
 `--check` symuluje przebieg bez zapisu, `--diff` dokłada treść różnicy
 w plikach szablonowych. Ta sama para flag na całym playbooku, bez `--limit`, to
-`make check` z korzenia repozytorium - używaj go, gdy chcesz obejrzeć wszystko
+`make ansible-check` z korzenia repozytorium - używaj go, gdy chcesz obejrzeć wszystko
 przed wdrożeniem, a wersji z `--limit` przy pracy nad jedną maszyną.
 
 **Uwaga na sekrety w `--diff`.** Szablony podstawiają hasła (Grafana, k3s,
@@ -345,7 +345,7 @@ ansible cicd-1 -m shell -a 'docker logs --tail 50 jenkins'
 ```
 
 Moduły `shell` i `command` służą **wyłącznie do odczytu**. Zmiana konfiguracji
-zawsze idzie przez rolę - inaczej zniknie przy najbliższym `make configure`
+zawsze idzie przez rolę - inaczej zniknie przy najbliższym `make ansible-apply`
 i, co gorsza, nikt nie będzie wiedział, że tam była.
 
 ### Poziomy szczegółowości

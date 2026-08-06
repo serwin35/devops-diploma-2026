@@ -23,9 +23,9 @@ Skrót operacyjny: [RUNBOOK §10](../RUNBOOK.md).
 |---|---|---|
 | `make secrets` | `sops secrets.sops.yaml` | Dodanie albo zmiana poświadczenia **dostawcy** (Proxmox, Cloudflare, AWS). Otwiera odszyfrowaną treść w `$EDITOR` |
 | `make secrets-app` | `sops ansible/group_vars/all/secrets.sops.yml` | To samo dla sekretów **wnętrza infrastruktury**: hasła baz, Grafany, Jenkinsa, klucz aplikacji |
-| `make plan` / `make infra` | `sops exec-env secrets.sops.yaml '<terraform ...>'` | Sekrety wchodzą do Terraforma jako zmienne środowiskowe procesu potomnego |
-| `make configure` / `make check` | `sops exec-env secrets.sops.yaml 'cd ansible && ansible-playbook playbook.yml [--check --diff]'` | To samo dla Ansible - rola `cloudflared` potrzebuje kluczy AWS, żeby odczytać token tunelu ze stanu |
-| `make aws` | `sops exec-env secrets.sops.yaml 'terraform -chdir=terraform/bootstrap ...'` | Bootstrap AWS z poświadczeniami z SOPS-a |
+| `make tf-plan` / `make tf-apply` | `sops exec-env secrets.sops.yaml '<terraform ...>'` | Sekrety wchodzą do Terraforma jako zmienne środowiskowe procesu potomnego |
+| `make ansible-apply` / `make ansible-check` | `sops exec-env secrets.sops.yaml 'cd ansible && ansible-playbook playbook.yml [--check --diff]'` | To samo dla Ansible - rola `cloudflared` potrzebuje kluczy AWS, żeby odczytać token tunelu ze stanu |
+| `make bootstrap-aws` | `sops exec-env secrets.sops.yaml 'terraform -chdir=terraform/bootstrap ...'` | Bootstrap AWS z poświadczeniami z SOPS-a |
 
 Pierwsza linia `Makefile`, która dotyczy sekretów, jest tak samo ważna jak same
 cele:
@@ -320,7 +320,7 @@ zapisałeś.
 | Objaw | Przyczyna | Naprawa |
 |---|---|---|
 | `Failed to get the data key required to decrypt the SOPS file` | Brak klucza age albo klucz nie pasuje do żadnego odbiorcy w pliku | `echo $SOPS_AGE_KEY_FILE` i `ls -l "$SOPS_AGE_KEY_FILE"`. Jeśli plik istnieje, sprawdź, czy jego `public key` figuruje w `.sops.yaml`; jeśli nie - potrzebujesz `updatekeys` od kogoś, kto ma dostęp |
-| Działa `make plan`, nie działa gołe `sops --decrypt` | `SOPS_AGE_KEY_FILE` ustawia dopiero `Makefile`; w gołej powłoce SOPS szuka klucza pod ścieżką XDG systemu | `export SOPS_AGE_KEY_FILE=$HOME/.config/sops/age/keys.txt` w bieżącej sesji, albo na stałe w `~/.zshrc` |
+| Działa `make tf-plan`, nie działa gołe `sops --decrypt` | `SOPS_AGE_KEY_FILE` ustawia dopiero `Makefile`; w gołej powłoce SOPS szuka klucza pod ścieżką XDG systemu | `export SOPS_AGE_KEY_FILE=$HOME/.config/sops/age/keys.txt` w bieżącej sesji, albo na stałe w `~/.zshrc` |
 | macOS: klucz działa w terminalu, nie działa w PhpStormie albo VS Code | Aplikacje GUI nie czytają `~/.zshrc`, więc nie widzą wyeksportowanej zmiennej | Albo trzymaj klucz **także** pod macOS-ową ścieżką XDG: `mkdir -p ~/Library/Application\ Support/sops/age && ln -s ~/.config/sops/age/keys.txt ~/Library/Application\ Support/sops/age/keys.txt`, albo uruchamiaj wszystko przez `make` |
 | `Error: MAC mismatch. File has ... expected ...` | Plik został zmieniony poza SOPS-em (ręczna edycja zaszyfrowanej treści, sklejenie konfliktu w gitcie, `sed` na pliku) | Nie da się tego "naprawić" - MAC chroni integralność. Odtwórz plik z historii gita (`git checkout HEAD -- secrets.sops.yaml`) i nanieś zmianę ponownie przez `make secrets` |
 | Konflikt w gitcie na `secrets.sops.yaml` | Dwie osoby zmieniły plik; zaszyfrowane bloki nie scalają się liniowo | Weź jedną wersję w całości (`git checkout --theirs` albo `--ours`), potem `make secrets` i nanieś brakujące klucze ręcznie. Nigdy nie scalaj zaszyfrowanych linii |
@@ -393,14 +393,14 @@ odbiorców w swoim bloku `sops:` i to ona rozstrzyga przy edycji - dlatego zmian
 
 | Konsument | Mechanizm | Kiedy |
 |---|---|---|
-| Terraform | `sops exec-env` w `Makefile` - wartości jako zmienne środowiskowe procesu | `make plan`, `make infra`, `make aws` |
+| Terraform | `sops exec-env` w `Makefile` - wartości jako zmienne środowiskowe procesu | `make tf-plan`, `make tf-apply`, `make bootstrap-aws` |
 | Ansible | Plugin `community.sops` (`vars_plugins_enabled` w `ansible.cfg`) - odszyfrowanie `group_vars/**/*.sops.yml` przy starcie playbooka | Każde uruchomienie `ansible-playbook`, także `--check` |
 
 Ansible **nie** potrzebuje `sops exec-env` do własnych sekretów, bo robi to
 plugin. Potrzebuje go natomiast do poświadczeń AWS: rola `cloudflared` czyta
 token tunelu ze stanu Terraforma w S3 (`cloud.terraform.terraform_output`),
 a bez kluczy w środowisku pada na `No valid credential sources found`, zanim
-dojdzie do reszty ról. Stąd `sops exec-env` również w celu `make configure`.
+dojdzie do reszty ról. Stąd `sops exec-env` również w celu `make ansible-apply`.
 
 ### Czego SOPS nie chroni
 

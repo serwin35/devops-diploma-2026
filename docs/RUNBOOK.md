@@ -471,8 +471,8 @@ Pełny zestaw (state, import, `-replace`/`-target`, output sensitive) jest w
 [`docs/komendy/terraform.md`](komendy/terraform.md).
 
 ```bash
-make plan                                         # podglad zmian (otwiera tunel do API Proxmoxa)
-make infra                                        # apply
+make tf-plan                                         # podglad zmian (otwiera tunel do API Proxmoxa)
+make tf-apply                                        # apply
 make validate
 
 # Recznie, gdy potrzeba czegos spoza Makefile
@@ -487,7 +487,7 @@ sops exec-env secrets.sops.yaml 'terraform -chdir=terraform output -raw proxmox_
 `No changes`:
 
 ```bash
-make plan
+make tf-plan
 ```
 
 Import zasobu, który powstał poza stanem:
@@ -534,8 +534,8 @@ sops exec-env ../secrets.sops.yaml 'ansible-playbook playbook.yml --check --diff
 Przez `make` (z odszyfrowanymi sekretami):
 
 ```bash
-make configure                                    # caly playbook
-make host                                         # bootstrap hypervisora
+make ansible-apply                                    # caly playbook
+make bootstrap-host                                         # bootstrap hypervisora
 ```
 
 ---
@@ -743,14 +743,14 @@ Zasady poprawnego uruchamiania Ansible w tym repo (pełny opis:
   przebieg assertem, zamiast wdrożyć pustą konfigurację,
 - `--limit` przyjmuje nazwy hostów z inventory (`monitoring-1`), nie aliasy
   SSH (`wf-monitoring-1`),
-- albo po prostu: `make configure` (całość) / `make check` (na sucho, z diffem).
+- albo po prostu: `make ansible-apply` (całość) / `make ansible-check` (na sucho, z diffem).
 
 #### C. Make jako pulpit operatora (~1 minuta, dobre otwarcie)
 
 ```bash
 make help       # lista wszystkich operacji z opisami
 make status     # zdrowie całości: węzły, pody, kontenery dev, kody HTTP
-make plan       # kod == rzeczywistość: No changes (tunel do API wstaje sam)
+make tf-plan       # kod == rzeczywistość: No changes (tunel do API wstaje sam)
 make test-infra # 34 testy dymne, wyłącznie odczyt
 ```
 
@@ -761,7 +761,7 @@ pytanie. Reszta pokazu to schodzenie w głąb od tego obrazka.
 ### Przygotowanie dzień wcześniej
 
 - [ ] Snapshot wszystkich maszyn (§11) - powrót w kilkanaście sekund, gdyby demo padło
-- [ ] `make plan` -> `No changes` (dowód idempotentności bez czekania na `apply`)
+- [ ] `make tf-plan` -> `No changes` (dowód idempotentności bez czekania na `apply`)
 - [ ] Terminal zalogowany na `k3s-server-1` w osobnej karcie
 - [ ] Sesja Cloudflare Access odświeżona (ważna 6 h)
 - [ ] Nagranie pełnego przebiegu pipeline'u jako materiał zapasowy
@@ -776,10 +776,10 @@ pytanie. Reszta pokazu to schodzenie w głąb od tego obrazka.
 
 | Pytanie | Sekcja |
 |---|---|
-| Jak wdrażacie się od zera? | README -> `make host`, `make infra`, `make configure` |
+| Jak wdrażacie się od zera? | README -> `make bootstrap-host`, `make tf-apply`, `make ansible-apply` |
 | Gdzie trzymacie sekrety? | ARCHITECTURE §4 - SOPS, i dlaczego nie Vault; [`docs/komendy/sops.md`](komendy/sops.md) |
 | Dlaczego nie chmura? | ARCHITECTURE §1 |
 | Jak zabezpieczyliście dostęp? | ARCHITECTURE §2 i §3 - trzy warstwy, cztery segmenty |
 | Co, jeśli padnie tunel? | Cztery niezależne drogi wejścia - RUNBOOK §1 |
-| Czy to jest idempotentne? | `make plan` na żywo -> `No changes` |
+| Czy to jest idempotentne? | `make tf-plan` na żywo -> `No changes` |
 | Dlaczego baza poza klastrem? | ARCHITECTURE §7 - `local-path` przy jednym hoście |

@@ -58,7 +58,7 @@ terraform/modules/services/proxmox/cicd/main.tf:9:           source = "../../../
 | Złożenia usług | [terraform/modules/services/proxmox/{bastion,cicd,observability,wolffire/dev,wolffire/prod}/](../../terraform/modules/services/proxmox/) |
 | Bootstrap SDN/firewall/storage | [terraform/modules/services/proxmox/bootstrap/](../../terraform/modules/services/proxmox/bootstrap/) |
 | Backend stanu | [terraform/providers.tf](../../terraform/providers.tf) - `backend "s3"`, `use_lockfile = true` |
-| Root oddzielny (chicken-egg) | [terraform/bootstrap/](../../terraform/bootstrap/) - bucket S3 + IAM, stan **lokalny**, uruchamiany raz (`make aws`) |
+| Root oddzielny (chicken-egg) | [terraform/bootstrap/](../../terraform/bootstrap/) - bucket S3 + IAM, stan **lokalny**, uruchamiany raz (`make bootstrap-aws`) |
 
 Reużywalność w praktyce: `modules/base/proxmox/vm` przyjmuje parametry (CPU,
 RAM, dysk, sieć, cloud-init, firewall) i jest wywoływany 7×, dając 8 maszyn.

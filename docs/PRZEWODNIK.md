@@ -10,7 +10,7 @@ typowych scenariuszach. Uzasadnienia decyzji architektonicznych są w
 
 ```
 devops-diploma-2026/
-├── Makefile                     # Wejście do wszystkiego: make host/infra/configure/secrets
+├── Makefile                     # Wejście do wszystkiego: make bootstrap-host/infra/configure/secrets
 ├── .sops.yaml                   # Reguły szyfrowania SOPS - kto (klucz age) odszyfruje co
 ├── secrets.sops.yaml            # Poświadczenia providerów (Proxmox, Cloudflare, AWS) - zaszyfrowane
 ├── README.md                    # Start: architektura, wdrożenie od zera, dostęp
@@ -21,7 +21,7 @@ devops-diploma-2026/
 │   ├── variables.tf             # Zmienne wejściowe root modułu
 │   ├── outputs.tf                # ssh_jump_host, tokeny tuneli, hasło Proxmoxa
 │   ├── providers.tf             # Wersje providerów + konfiguracja SSH providera proxmox
-│   ├── bootstrap/                # Terraform Nr 0: buckety S3 + IAM (stan LOKALNY, `make aws`)
+│   ├── bootstrap/                # Terraform Nr 0: buckety S3 + IAM (stan LOKALNY, `make bootstrap-aws`)
 │   └── modules/
 │       ├── base/                # Klocki reużywalne: 1 maszyna, 1 tunel, ustawienia strefy
 │       │   ├── proxmox/vm/      # Jeden moduł maszyny wirtualnej - wywoływany 8×
@@ -83,21 +83,21 @@ Jedyne wejście do operacji na infrastrukturze - nikt nie powinien wołać
 
 | Cel | Co robi |
 |---|---|
-| `make host` | `ansible-playbook bootstrap-host.yml` - krok zerowy, jednorazowo |
-| `make infra` | `terraform apply` (przez SSH-tunel do API Proxmoxa, `PVE_TUNNEL`) |
-| `make configure` | `ansible-playbook playbook.yml` - konfiguracja maszyn; `LIMIT=host TAGS=rola` zawężają |
-| `make up` | `infra` + `configure` razem |
-| `make plan` | `terraform plan` - podgląd zmian |
+| `make bootstrap-host` | `ansible-playbook bootstrap-host.yml` - krok zerowy, jednorazowo |
+| `make tf-apply` | `terraform apply` (przez SSH-tunel do API Proxmoxa, `PVE_TUNNEL`) |
+| `make ansible-apply` | `ansible-playbook playbook.yml` - konfiguracja maszyn; `LIMIT=host TAGS=rola` zawężają |
+| `make up` | `tf-apply` + `ansible-apply` razem |
+| `make tf-plan` | `terraform plan` - podgląd zmian |
 | `make secrets` | `sops secrets.sops.yaml` - sekrety dostawców (Proxmox, Cloudflare, AWS) |
 | `make secrets-app` | `sops ansible/group_vars/all/secrets.sops.yml` - sekrety wnętrza (hasła baz, Grafany...) |
-| `make aws` | Terraform bootstrap: buckety S3 + IAM (stan lokalny, raz) |
-| `make check` | `ansible-playbook playbook.yml --check --diff` - na sucho; też przyjmuje `LIMIT`/`TAGS` |
+| `make bootstrap-aws` | Terraform bootstrap: buckety S3 + IAM (stan lokalny, raz) |
+| `make ansible-check` | `ansible-playbook playbook.yml --check --diff` - na sucho; też przyjmuje `LIMIT`/`TAGS` |
 | `make status` | Zdrowie całości: węzły k3s, pody, kontenery dev, kody HTTP - tylko odczyt |
 | `make test-infra` | `scripts/smoke-test.sh` - testy dymne, tylko odczyt |
 | `make fmt` / `make validate` | Formatowanie i walidacja składni |
 
 **PVE_TUNNEL** (linie 12-15): API Proxmoxa nie jest wystawione na internet -
-`make plan`/`make infra` najpierw stawiają tunel SSH `127.0.0.1:18006` przez
+`make tf-plan`/`make tf-apply` najpierw stawiają tunel SSH `127.0.0.1:18006` przez
 `wf-proxmox-1` (`ControlPersist`, więc kolejne wywołania są natychmiastowe).
 Port 8006 hosta jest zamknięty dla świata; jedyna droga do API to ten tunel
 albo panel przez `https://proxmox.wolffire.dev` (Zero Trust Access).
@@ -211,7 +211,7 @@ potem podepnij go do maszyny przez `firewall_sgs` w jej module (§3, wyżej).
 
 ### 3.3 `terraform/bootstrap/` - AWS, stan lokalny
 
-Uruchamiane raz, ręcznie (`make aws`), **zanim** cokolwiek innego istnieje -
+Uruchamiane raz, ręcznie (`make bootstrap-aws`), **zanim** cokolwiek innego istnieje -
 tworzy bucket na stan Terraforma (`state`, wersjonowany, szyfrowany, 90 dni
 retencji starych wersji) i bucket na kopie zapasowe (`backups`, przejście do
 Glacier po 30 dniach) oraz dwie tożsamości IAM: `wolffire-tf-state` (pełny
@@ -243,7 +243,7 @@ potwierdzenie subskrypcji.
 | `ssh_config` | **Jedyne** źródło topologii SSH - port 22022, `ProxyJump %r@wf-bastion-1`, ścieżki kluczy. Używane przez `ansible_connection: ssh` (`ssh_args = -F ssh_config`) i przez ludzi bezpośrednio |
 | `inventory.yml` | Grupy (`bastion`, `cicd`, `observability`, `k3s_server`, `k3s_agent`, `postgres`, `redis`, `docker`, `dev`, `prod`) + `private_ip` jako dane dla szablonów (Prometheus, Loki) |
 | `playbook.yml` | Kolejność wykonania: role wspólne na `all`, potem `ipv6_router` na `proxmox`, `routes` na `bastion`, `cloudflared` na `cicd:observability:proxmox:dev` + osobno na `k3s_server`, potem role per usługa |
-| `bootstrap-host.yml` | Krok zerowy - patrz README, sekcja "Dlaczego `make host` jest osobno" |
+| `bootstrap-host.yml` | Krok zerowy - patrz README, sekcja "Dlaczego `make bootstrap-host` jest osobno" |
 | `requirements.yml` | Kolekcje: `cloud.terraform` (czyta tokeny tuneli ze stanu), `community.sops`, `community.docker`, `community.postgresql`, `ansible.posix` |
 | `group_vars/all/main.yml` | Zmienne wspólne: `ssh_port`, adresy IP maszyn używane w regułach (`bastion_ip`, `monitoring_ip`, `cicd_ip`, `db_ip`, `k3s_subnet`), kanał alertów |
 | `group_vars/all/secrets.sops.yml` | Sekrety **wewnętrzne**: hasła baz, `k3s_token`, `ghcr_token`, `jenkins_admin_password`, `restic_password`, webhooki powiadomień |

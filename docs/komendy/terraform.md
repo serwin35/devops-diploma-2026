@@ -25,12 +25,12 @@ Gdzie co leży w kodzie (który plik edytować przy jakiej zmianie) opisuje
 
 | Cel `make` | Co uruchamia pod spodem (dosłownie) | Kiedy używać |
 |---|---|---|
-| `make plan` | `PVE_TUNNEL` + `sops exec-env secrets.sops.yaml 'terraform -chdir=terraform plan'` | Przed każdą zmianą infrastruktury. Nic nie zapisuje |
-| `make infra` | `PVE_TUNNEL` + `sops exec-env secrets.sops.yaml 'terraform -chdir=terraform apply'` | Wdrożenie zaakceptowanego planu |
-| `make up` | `make infra` + `make configure` | Pełne wdrożenie od zera (Terraform, potem Ansible) |
+| `make tf-plan` | `PVE_TUNNEL` + `sops exec-env secrets.sops.yaml 'terraform -chdir=terraform plan'` | Przed każdą zmianą infrastruktury. Nic nie zapisuje |
+| `make tf-apply` | `PVE_TUNNEL` + `sops exec-env secrets.sops.yaml 'terraform -chdir=terraform apply'` | Wdrożenie zaakceptowanego planu |
+| `make up` | `make tf-apply` + `make ansible-apply` | Pełne wdrożenie od zera (Terraform, potem Ansible) |
 | `make fmt` | `terraform -chdir=terraform fmt -recursive` | Przed commitem, ujednolica wcięcia i wyrównania |
 | `make validate` | `terraform -chdir=terraform validate` + `ansible-lint ansible/ \|\| true` | Szybka kontrola składni, bez kontaktu z API i bez sekretów |
-| `make aws` | `sops exec-env secrets.sops.yaml 'terraform -chdir=terraform/bootstrap init && terraform -chdir=terraform/bootstrap apply'`, potem `output -json credentials` | Jednorazowo, przed wszystkim innym. Tworzy buckety S3 i tożsamości IAM |
+| `make bootstrap-aws` | `sops exec-env secrets.sops.yaml 'terraform -chdir=terraform/bootstrap init && terraform -chdir=terraform/bootstrap apply'`, potem `output -json credentials` | Jednorazowo, przed wszystkim innym. Tworzy buckety S3 i tożsamości IAM |
 | `make help` | `grep`/`awk` po komentarzach `##` w `Makefile` | Gdy nie pamiętasz nazwy celu |
 
 Aktualna lista celów prosto z repozytorium:
@@ -115,7 +115,7 @@ sops exec-env secrets.sops.yaml 'terraform -chdir=terraform plan -lock=false'
 sops exec-env secrets.sops.yaml 'terraform -chdir=terraform plan -out=tf.plan'
 ```
 
-> Albo krócej: `make plan` - to samo wywołanie, plus tunel otwierany po drodze.
+> Albo krócej: `make tf-plan` - to samo wywołanie, plus tunel otwierany po drodze.
 
 Skrócone wyjście dla infrastruktury bez zmian w kodzie:
 
@@ -154,7 +154,7 @@ sops exec-env secrets.sops.yaml 'terraform -chdir=terraform apply tf.plan'
 sops exec-env secrets.sops.yaml 'terraform -chdir=terraform apply -auto-approve'
 ```
 
-> Albo krócej: `make infra` (a razem z Ansible: `make up`).
+> Albo krócej: `make tf-apply` (a razem z Ansible: `make up`).
 
 Zakończenie wygląda tak:
 
@@ -167,7 +167,7 @@ ssh_jump_host = { ... }
 ```
 
 Jeżeli zmiana dotyka konfiguracji *wewnątrz* maszyn (pakiety, usługi, pliki),
-po `apply` uruchom jeszcze Ansible - `make configure`, opis w
+po `apply` uruchom jeszcze Ansible - `make ansible-apply`, opis w
 [`ansible.md`](ansible.md).
 
 ### 2.3 Co jest wdrożone: `terraform output`
@@ -323,7 +323,7 @@ sops exec-env secrets.sops.yaml \
 Składnia: `import <adres w konfiguracji> <identyfikator w API>`. Adres bierzesz
 z kodu (nagłówek `resource "typ" "nazwa"` plus ścieżka modułów), identyfikator
 z dokumentacji providera albo z UI Proxmoxa/Cloudflare. Po imporcie **zawsze**
-uruchom `make plan`: pokaże różnice między stanem faktycznym a konfiguracją,
+uruchom `make tf-plan`: pokaże różnice między stanem faktycznym a konfiguracją,
 które trzeba wyrównać ręcznie w `.tf`.
 
 ### 3.4 Jak odtworzyć jedną maszynę (`-replace`)
@@ -335,7 +335,7 @@ sops exec-env secrets.sops.yaml \
 ```
 
 Zasób zostanie zniszczony i utworzony od nowa. Przy maszynie wirtualnej oznacza
-to **utratę jej dysku** - dane odtwarza dopiero Ansible (`make configure`).
+to **utratę jej dysku** - dane odtwarza dopiero Ansible (`make ansible-apply`).
 
 ### 3.5 Jak ograniczyć zakres (`-target`)
 
@@ -430,7 +430,7 @@ sops exec-env secrets.sops.yaml \
   'terraform -chdir=terraform/bootstrap init && terraform -chdir=terraform/bootstrap apply'
 ```
 
-> Albo krócej: `make aws` - to samo wywołanie plus wypisanie kluczy IAM na
+> Albo krócej: `make bootstrap-aws` - to samo wywołanie plus wypisanie kluczy IAM na
 > koniec.
 
 **Uwaga na poświadczenia.** Klucz IAM zapisany w SOPS-ie ma prawa **tylko** do
@@ -460,9 +460,9 @@ służy `-replace=aws_sns_topic_subscription.alerts_email`.
 
 | Objaw | Przyczyna | Naprawa |
 |---|---|---|
-| `dial tcp 127.0.0.1:18006: connect: connection refused` | Tunel SSH do API Proxmoxa nie żyje (padło połączenie albo `ControlPersist` wygasł) | `ssh -F ansible/ssh_config -fN -L 18006:localhost:8006 wf-proxmox-1`, patrz sekcja 2.0. Cele `make plan`/`make infra` robią to same |
+| `dial tcp 127.0.0.1:18006: connect: connection refused` | Tunel SSH do API Proxmoxa nie żyje (padło połączenie albo `ControlPersist` wygasł) | `ssh -F ansible/ssh_config -fN -L 18006:localhost:8006 wf-proxmox-1`, patrz sekcja 2.0. Cele `make tf-plan`/`make tf-apply` robią to same |
 | `bind [127.0.0.1]:18006: Address already in use` | Tunel z poprzedniego uruchomienia nadal działa - port jest zajęty przez Twój własny proces | Nieszkodliwe. Sprawdź `ssh -F ansible/ssh_config -O check wf-proxmox-1`; zamknięcie: `ssh -F ansible/ssh_config -O exit wf-proxmox-1` |
-| `401 Unauthorized` z API Proxmoxa mimo poprawnego tokenu | Po restarcie `pveproxy`/`pvedaemon` (albo po `apt upgrade` na hoście) stary tunel wskazuje na zamknięte gniazdo i przekazuje ruch donikąd | Zamknij i otwórz tunel ponownie (`-O exit`, potem `make plan`). Jeśli nie pomoże, zweryfikuj token: `sops --decrypt --extract '["PROXMOX_VE_API_TOKEN"]' secrets.sops.yaml` |
+| `401 Unauthorized` z API Proxmoxa mimo poprawnego tokenu | Po restarcie `pveproxy`/`pvedaemon` (albo po `apt upgrade` na hoście) stary tunel wskazuje na zamknięte gniazdo i przekazuje ruch donikąd | Zamknij i otwórz tunel ponownie (`-O exit`, potem `make tf-plan`). Jeśli nie pomoże, zweryfikuj token: `sops --decrypt --extract '["PROXMOX_VE_API_TOKEN"]' secrets.sops.yaml` |
 | `No valid credential sources found` | Komenda uruchomiona bez `sops exec-env` - backend S3 nie dostał kluczy AWS | Owiń wywołanie: `sops exec-env secrets.sops.yaml '...'` albo użyj celu `make` |
 | `Error acquiring the state lock` | Inny `apply` trzyma blokadę w S3 (`use_lockfile = true`) | Poczekaj do końca tamtego przebiegu. Gdy proces został ubity: `terraform force-unlock <ID>` (sekcja 3.7) |
 | `plan` pokazuje zmianę mimo braku zmian w kodzie | Dryf po ręcznej edycji w UI Proxmoxa albo Cloudflare, ewentualnie rozjazd normalizacji (kolejność list, wielkość liter) | `state show` zasobu i porównanie pole po polu z `.tf`. Zmiana ręczna: albo cofnij ją w UI, albo przenieś do kodu i zaakceptuj plan |
@@ -523,8 +523,8 @@ dostęp **tylko** do tego bucketa.
 
 | Katalog | Stan | Co tworzy | Jak uruchamiany |
 |---|---|---|---|
-| `terraform/bootstrap/` | lokalny plik | Buckety S3, tożsamości IAM, temat SNS | `make aws`, raz na starcie projektu |
-| `terraform/` | S3 (`terraform-states-wf`) | Sieć SDN, storage, firewall, 8 maszyn, tunele i DNS Cloudflare | `make plan` / `make infra`, na co dzień |
+| `terraform/bootstrap/` | lokalny plik | Buckety S3, tożsamości IAM, temat SNS | `make bootstrap-aws`, raz na starcie projektu |
+| `terraform/` | S3 (`terraform-states-wf`) | Sieć SDN, storage, firewall, 8 maszyn, tunele i DNS Cloudflare | `make tf-plan` / `make tf-apply`, na co dzień |
 
 Podział wynika z problemu kury i jajka: katalog, który tworzy bucket na stan,
 nie może trzymać swojego stanu w tym buckecie, bo w chwili pierwszego `apply`
