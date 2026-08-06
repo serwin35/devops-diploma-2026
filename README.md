@@ -57,6 +57,7 @@ graph TD
     K3S -. "tunel wychodzący" .-> CF
 
     CICD -- "vzdump + pg_dump + restic" --> AWS[(AWS S3)]
+    K3S -- "pliki aplikacji<br/>(FILESYSTEM_DISK=s3)" --> AWS
 
     style CF fill:#f6821f,color:#fff
     style AWS fill:#ff9900,color:#fff
