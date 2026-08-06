@@ -64,8 +64,13 @@ groups:
         #
         # Wszystkie usługi w tym projekcie mają restart: unless-stopped, więc
         # kontener w stanie `stopped` oznacza, że Docker się poddał.
+        #
+        # 2 minuty, nie dłużej: planowe restarty nie zostawiają stanu `stopped`
+        # (restart podnosi kontener od razu), więc dwie minuty w tym stanie to
+        # już nie jest przejściówka - a krótki czas reakcji pozwala też pokazać
+        # pełną pętlę alarmową na żywo, bez kwadransa czekania.
         expr: engine_daemon_container_states_containers{state="stopped"} > 0
-        for: 10m
+        for: 2m
         labels:
           severity: warning
         annotations:
