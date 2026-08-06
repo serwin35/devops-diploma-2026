@@ -70,16 +70,27 @@ Opcjonalne:
 
 
 Terraform state w AWS S3 - 1
+
 Domena z poprawnym SSL - 4
+
 Kubernetes - 6
+
 Agenty Jenkins (lub inne runnery) - 3
+
 Jenkins Cac - 1
+
 Ansible - 6
+
 Prometheus - 6
+
 Grafana - 4
+
 Alert Manager - 2
+
 Loki (albo ELK) - 5
+
 Unit testy (lub inne testy automatyczne) - 2
+
 
 
 Razem: 40 (0 - 200 pkt)
