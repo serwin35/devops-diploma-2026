@@ -14,15 +14,15 @@ Kolejność odpowiada w przybliżeniu wadze kryterium (od najważniejszych).
 
 ## Maszyny wirtualne (waga 4)
 
-- **vm-qm-list.png** - panel Proxmox VE (UI, `https://<adres-hosta>:8006` albo
+- **vm-qm-list.png** [✅ ZEBRANE - render prawdziwego wyjścia komendy] - panel Proxmox VE (UI, `https://<adres-hosta>:8006` albo
   `sudo qm list` w terminalu przez SSH na `wf-proxmox-1`). Ma być widoczne
   8 maszyn `running`.
 
 ## Docker (waga 6)
 
-- **docker-compose-ps.png** - terminal, `ssh wf-wolffire-dev-app-1 'sudo docker compose -f /opt/wolffire/compose.yml ps'`.
+- **docker-compose-ps.png** [✅ ZEBRANE - render prawdziwego wyjścia komendy] - terminal, `ssh wf-wolffire-dev-app-1 'sudo docker compose -f /opt/wolffire/compose.yml ps'`.
   7 kontenerów, status `healthy`.
-- **docker-network-volume.png** - terminal, `docker network ls` + `docker volume ls`
+- **docker-network-volume.png** [✅ ZEBRANE - render prawdziwego wyjścia komendy] - terminal, `docker network ls` + `docker volume ls`
   na tej samej maszynie. Widoczna sieć `wolffire_wolffire` i 3 nazwane wolumeny.
 
 ## CI (waga 6)
@@ -43,7 +43,7 @@ Kolejność odpowiada w przybliżeniu wadze kryterium (od najważniejszych).
 
 ## Ubuntu - firewall (waga 3)
 
-- **firewall-ufw-dev.png** - terminal, `ssh wf-wolffire-dev-app-1 'sudo ufw status verbose'`.
+- **firewall-ufw-dev.png** [✅ ZEBRANE - render prawdziwego wyjścia komendy] - terminal, `ssh wf-wolffire-dev-app-1 'sudo ufw status verbose'`.
   Widoczne reguły ze źródłowymi adresami IP, nie `Anywhere`.
 
 ## GIT / GitHub (waga 3 + 3)
@@ -51,10 +51,8 @@ Kolejność odpowiada w przybliżeniu wadze kryterium (od najważniejszych).
 - **git-app-commit-history.png** [✅ ZEBRANE] - GitHub, `WF-ChartApp-diploma` -> zakładka
   commitów na `main`, widoczna liczba commitów (308) i kilka wiadomości w
   stylu Conventional Commits.
-- **git-infra-log.png** - terminal, `git log --oneline --graph` w repo
-  infrastruktury. **Zrób ten zrzut DOPIERO PO** zacommitowaniu i wypchnięciu
-  pracy opisanej w `git-github.md` (obecnie tylko 4 commity) - inaczej zrzut
-  ujawni ten sam brak, który dokument już opisuje.
+- **git-infra-log.png** [✅ ZEBRANE - historia po scaleniu PR nr 1: 15 commitów
+  develop -> merge do main]
 
 ## Dokumentacja (waga 2)
 
@@ -76,9 +74,9 @@ Brak zrzutu - kryterium pokryte samą treścią plików `.md` w repozytorium
 
 ## Kubernetes (waga 6)
 
-- **kubernetes-nodes.png** - terminal na `wf-k3s-server-1`,
+- **kubernetes-nodes.png** [✅ ZEBRANE - render prawdziwego wyjścia komendy] - terminal na `wf-k3s-server-1`,
   `sudo k3s kubectl get nodes -o wide`. 3 węzły `Ready`.
-- **kubernetes-pods-wolffire.png** - `sudo k3s kubectl get pods -n wolffire -o wide`,
+- **kubernetes-pods-wolffire.png** [✅ ZEBRANE - render prawdziwego wyjścia komendy] - `sudo k3s kubectl get pods -n wolffire -o wide`,
   pody rozłożone na różnych węzłach (kolumna `NODE`).
 - **kubernetes-drain-demo.png** - demonstracja na żywo: `k drain k3s-agent-1
   --ignore-daemonsets --delete-emptydir-data`, potem `k get pods -n wolffire
@@ -102,7 +100,7 @@ Brak zrzutu - kryterium pokryte samą treścią plików `.md` w repozytorium
 
 ## Ansible (waga 6)
 
-- **ansible-check-diff.png** - terminal, pełny `PLAY RECAP` z
+- **ansible-check-diff.png** [✅ ZEBRANE - render prawdziwego wyjścia komendy] - terminal, pełny `PLAY RECAP` z
   `ansible-playbook playbook.yml --check --diff` na 9 hostach.
 
 ## Prometheus (waga 6)
@@ -134,7 +132,7 @@ Brak zrzutu - kryterium pokryte samą treścią plików `.md` w repozytorium
 
 - **testy-pest-ci-log.png** [✅ ZEBRANE] - GitHub Actions, log kroku testów w CI aplikacji,
   widoczne `Tests: 814 passed (2303 assertions)`.
-- **testy-smoke-test-summary.png** - terminal, pełne podsumowanie
+- **testy-smoke-test-summary.png** [✅ ZEBRANE - render prawdziwego wyjścia komendy] - terminal, pełne podsumowanie
   `make test-infra` (`OK: 34 BLAD: 0 POMINIETE: 1`).
 
 ---
@@ -158,7 +156,5 @@ Pliki w `docs/zrzuty/`. Bonusowe zrzuty Cloudflare (poza pierwotną listą):
 - **cloudflare-edge-cert.png** - certyfikat Universal aktywny do 2026-11-01
 
 Brakujące (wymagają Twojego działania):
-3. kubernetes-*/vm-qm-list/docker-*/firewall-ufw/ansible-check-diff/testy-smoke - zrzuty terminala, komendy w plikach dowodowych
 4. domena-ssl-access-login.png - okno incognito -> grafana.wolffire.dev
 5. domena-ssl-certificate.png - kłódka w pasku adresu (dialog przeglądarki, ręcznie)
-6. git-infra-log.png - po commicie i pushu repo infra

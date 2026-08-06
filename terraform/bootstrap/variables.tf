@@ -33,6 +33,16 @@ variable "backup_retention_days" {
   description = "Po ilu dniach kopie są usuwane"
 }
 
+# Sam bucket i tożsamość wolffire-app tworzy moduł usługi wolffire/prod
+# w głównym Terraformie - tu żyje tylko nazwa, bo polityka klucza stanu
+# musi wskazać ARN-y, którymi wolno mu zarządzać.
+variable "app_storage_bucket" {
+  type        = string
+  nullable    = false
+  default     = "wolffire-app-storage"
+  description = "Bucket plików aplikacji - zarządza nim moduł usługi wolffire/prod"
+}
+
 variable "alerts_email" {
   description = "Adres, na który SNS dostarcza alerty z Alertmanagera"
   type        = string

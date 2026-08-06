@@ -32,8 +32,12 @@ route:
 
 {% if alertmanager_sns_topic_arn %}
     # Kopia na e-mail (SNS) OBOK Chata: continue sprawia, że alert po
-    # dopasowaniu tej trasy jest dalej sprawdzany przez kolejne - trafia
-    # więc i na e-mail, i do trasy gchat.
+    # dopasowaniu tej trasy jest dalej sprawdzany przez kolejne trasy.
+    #
+    # UWAGA na pułapkę routingu: gdy JAKAKOLWIEK trasa potomna się dopasuje,
+    # receiver główny (gchat) nie jest już używany. Bez jawnej trasy gchat
+    # niżej alert warning kończył na samym e-mailu - i tak właśnie zginęło
+    # powiadomienie o zatrzymanym kontenerze, choć e-mail doszedł.
     - matchers: ['severity=~"warning|critical"']
       receiver: sns-email
       continue: true
@@ -42,6 +46,11 @@ route:
     - matchers: ['severity="critical"']
       receiver: gchat
       repeat_interval: 1h
+
+    # Jawna trasa dla warning na gchat - NIE polegamy na receiverze głównym,
+    # bo dopasowanie trasy sns-email powyżej wyłącza fallback do roota.
+    - matchers: ['severity="warning"']
+      receiver: gchat
 
 inhibit_rules:
   # Gdy maszyna nie odpowiada, nie ma sensu alarmować osobno o każdym

@@ -1,3 +1,11 @@
+# Klucz odczytuje się raz po apply i przenosi do SOPS:
+#   terraform -chdir=terraform output -json wolffire_app_storage_credentials
+output "wolffire_app_storage_credentials" {
+  sensitive   = true
+  description = "Klucz IAM wolffire-app (pliki aplikacji na S3) do przeniesienia do SOPS"
+  value       = module.wolffire_prod.app_storage_credentials
+}
+
 output "ssh_jump_host" {
   description = "Host pośredniczący w połączeniach SSH - żadna VM-ka nie ma publicznego adresu"
 

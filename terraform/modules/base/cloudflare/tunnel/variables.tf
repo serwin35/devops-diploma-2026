@@ -33,6 +33,26 @@ variable "services" {
   description = "Usługi wystawiane przez ten tunel, kluczem jest subdomena"
 }
 
+# Rekordy DNS należące do DOMENY tej usługi, ale niepochodzące z tunelu -
+# np. TXT weryfikacji własności (Google Search Console, Facebook). Dzięki tej
+# mapie rekord mieszka przy usłudze, do której należy, a nie w strefie.
+# Rekordy ogólnostrefowe (poczta: MX, SPF, DMARC) zostają w module dns.
+variable "extra_records" {
+  type = map(object({
+    type    = string
+    content = string
+    # null = rekord na hoście usługi (apex albo subdomena z `services`);
+    # prefiks = rekord na <prefiks>.<zone>.
+    name     = optional(string)
+    ttl      = optional(number, 1)
+    priority = optional(number)
+    comment  = optional(string)
+  }))
+  nullable    = false
+  default     = {}
+  description = "Dodatkowe rekordy DNS usługi (np. TXT weryfikacji domeny), kluczem jest identyfikator w stanie"
+}
+
 variable "allowed_emails" {
   type        = set(string)
   nullable    = false

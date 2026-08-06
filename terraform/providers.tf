@@ -14,6 +14,10 @@ terraform {
       source  = "hashicorp/random"
       version = "3.7.2"
     }
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.31.0"
+    }
   }
 
   backend "s3" {
@@ -49,5 +53,20 @@ provider "proxmox" {
 }
 
 provider "cloudflare" {}
+
+# Auth: te same AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (wolffire-tf-state)
+# co backend stanu. Klucz ma poza stanem wyłącznie zawężone prawa do storage
+# aplikacji - patrz ManageAppStorage* w bootstrap/iam.tf.
+# Region jak kopie zapasowe: blisko serwera OVH, taniej za transfer.
+provider "aws" {
+  region = "eu-north-1"
+
+  default_tags {
+    tags = {
+      managed_by = "terraform"
+      project    = "wolffire-diploma"
+    }
+  }
+}
 
 

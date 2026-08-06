@@ -21,7 +21,7 @@ tego statusu. ⚠️ oznacza kryterium z odnotowanym, realnym brakiem
 | CD | 6 | [cd.md](cd.md) | ✅ dowody zebrane - zielone przebiegi: main -> deploy-prod, develop -> deploy-dev (2026-08-05) |
 | AWS EC2 / Virtual Machines | 4 | [vm.md](vm.md) | ✅ dowody zebrane |
 | Ubuntu - firewall | 3 | [firewall.md](firewall.md) | ✅ dowody zebrane |
-| GIT | 3 | [git-github.md](git-github.md) | ⚠️ repo infrastruktury ma tylko 4 commity, reszta pracy niescommitowana - patrz plik |
+| GIT | 3 | [git-github.md](git-github.md) | ✅ dowody zebrane - 15 commitów scalonych do `main` przez PR nr 1 (2026-08-05) |
 | GitHub | 3 | [git-github.md](git-github.md) | ⚠️ „fork” aplikacji nie jest technicznym forkiem GitHuba - patrz plik |
 | Docker Hub (rejestr) | 1 | [rejestr.md](rejestr.md) | ✅ dowody zebrane (GHCR zamiast Docker Huba) |
 | Dokumentacja MarkDown | 2 | [dokumentacja.md](dokumentacja.md) | ✅ dowody zebrane |
@@ -48,14 +48,13 @@ tego statusu. ⚠️ oznacza kryterium z odnotowanym, realnym brakiem
    zebrana 2026-08-05 (28 plików w `docs/zrzuty/`), zostały pozycje
    terminalowe, mail alertu SNS i dwa zrzuty ręczne (ekran logowania
    Access w incognito, kłódka certyfikatu).
-2. **GIT (waga 3)** - zacommitować i wypchnąć niescommitowany dorobek
-   (`terraform/`, `ansible/`, `helm/`, `scripts/`, `docs/`…) do
-   `serwin35/devops-diploma-2026`; potem zrzut `git-infra-log.png`.
-   Szczegóły w [git-github.md](git-github.md).
+2. **Zrzut `git-infra-log.png`** - `git log --oneline --graph` po scaleniu
+   PR nr 1 (historia jest już na `main`).
 
 Rozwiązane od czasu pierwszego spisu: CD zielone na obu gałęziach
-([cd.md](cd.md)), dokumentacja ujednolicona z faktycznym stanem
-(GHCR, tunele per maszyna, kanał e-mail SNS), smoke test 34/34.
+([cd.md](cd.md)), historia gita infrastruktury scalona do `main` (PR nr 1),
+dokumentacja ujednolicona z faktycznym stanem (GHCR, tunele per maszyna,
+kanał e-mail SNS), smoke test 34/34.
 
 Related: [docs/PLAN.md](../PLAN.md) (status faz i pokrycia kryteriów),
 [docs/RUNBOOK.md](../RUNBOOK.md) (scenariusz obrony krok po kroku).

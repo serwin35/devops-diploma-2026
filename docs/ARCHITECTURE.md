@@ -26,9 +26,10 @@ hypervisorze liczą się identycznie. Chmura nie daje tu żadnej przewagi, a odb
 - **Snapshoty.** Przed demonstracją robi się snapshot wszystkich maszyn - jeśli
   pokaz się wywróci, powrót zajmuje kilkanaście sekund.
 
-**AWS zostaje wyłącznie jako S3**, bo jedno kryterium nazywa go wprost
-(„Terraform state w AWS S3"). Bucket na stan, drugi na kopie zapasowe.
-Koszt: grosze miesięcznie.
+**AWS zostaje wyłącznie jako S3 i SNS**, bo jedno kryterium nazywa go wprost
+(„Terraform state w AWS S3"). Trzy buckety: stan Terraforma, kopie zapasowe
+i pliki aplikacji produkcyjnej (`wolffire-app-storage` - patrz sekcja 7);
+SNS dostarcza alerty na e-mail. Koszt: grosze miesięcznie.
 
 ---
 
@@ -239,13 +240,16 @@ złożoność Kubernetesa. Baza na osobnej maszynie jest prostsza i szybsza.
 **Trzy węzły zamiast jednego**, bo dopiero wtedy da się pokazać, że klaster
 faktycznie jest klastrem: `kubectl drain` na agencie i pody wstają na drugim.
 
-**Pliki aplikacji stoją tymczasowo na `emptyDir`, docelowo mają trafić do S3.**
-`storage/app` w chart Helma (`helm/wolffire/templates/deployment-php.yaml`)
-montowany jest jako `emptyDir` - świadome ograniczenie na potrzeby dema: przy
-więcej niż jednej replice PHP-FPM każdy pod ma osobną kopię i pliki giną przy
-restarcie, bo k3s w tym układzie nie oferuje wolumenu RWX. Docelowa poprawka
-to `FILESYSTEM_DISK=s3` (`app.filesystemDisk=s3` w wartościach chartu) -
-wartość domyślna w `values.yaml` to jednak `local`.
+**Pliki aplikacji na produkcji leżą w S3** (`FILESYSTEM_DISK=s3`,
+`app.filesystemDisk=s3` w wartościach produkcyjnych chartu). `storage/app`
+w podzie to nadal `emptyDir`, ale trzyma już tylko cache i pliki przejściowe -
+uploady użytkowników (załączniki zadań, `ATTACHMENTS_DISK=s3`) idą do bucketa
+`wolffire-app-storage`, wspólnego dla wszystkich replik PHP-FPM. Bucket
+i tożsamość IAM `wolffire-app` tworzy moduł usługi
+`terraform/modules/services/proxmox/wolffire/prod` (storage.tf); Livewire
+wysyła pliki z przeglądarki bezpośrednio do bucketa przez presigned URL,
+stąd reguła CORS dla `https://wolffire.dev`. Wartość domyślna w `values.yaml`
+to jednak `local` - dev (jedna maszyna, compose) zostaje na dysku lokalnym.
 
 ---
 
@@ -366,8 +370,10 @@ harmonogramu po stronie aplikacji (`config/integrations.php`).
   wszystkich maszyn przed demonstracją oraz nagranie pełnego przebiegu pipeline'u
   jako materiał zapasowy.
 - **`random_password` w stanie Terraforma** - opisane w sekcji 4.
-- **`storage/app` na `emptyDir`, nie na S3** - opisane w sekcji 7. Przy więcej
-  niż jednej replice PHP-FPM uploady nie są współdzielone między podami.
+- **Dysk `media` rozliczeń (dokumenty OCR) jest lokalny** - załączniki zadań
+  są już na S3 (sekcja 7), ale przepływ OCR czyta pliki po ścieżce lokalnej
+  (`Storage::disk('media')->path()`), więc jego migracja na S3 wymaga zmian
+  w kodzie przetwarzania, nie tylko konfiguracji.
 - **Aplikacja zależy od płatnej biblioteki** (Flux UI Pro). Obraz budowany jest
   w CI i publikowany do GHCR, więc odtworzenie środowiska nie wymaga licencji -
   ale przebudowa obrazu od zera już tak.

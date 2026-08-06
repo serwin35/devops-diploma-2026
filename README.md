@@ -57,6 +57,7 @@ graph TD
     K3S -. "tunel wychodzący" .-> CF
 
     CICD -- "vzdump + pg_dump + restic" --> AWS[(AWS S3)]
+    K3S -- "pliki aplikacji<br/>(FILESYSTEM_DISK=s3)" --> AWS
 
     style CF fill:#f6821f,color:#fff
     style AWS fill:#ff9900,color:#fff
@@ -141,9 +142,9 @@ Bez niego żadna komenda operująca na infrastrukturze nie ruszy.
 ## Wdrożenie od zera
 
 ```bash
-make host        # 1. bootstrap hosta Proxmoxa - jednorazowo, po instalacji OVH
-make infra       # 2. Terraform: sieć, storage, firewall, 8 maszyn wirtualnych
-make configure   # 3. Ansible: konfiguracja wszystkiego wewnątrz maszyn
+make bootstrap-host        # 1. bootstrap hosta Proxmoxa - jednorazowo, po instalacji OVH
+make tf-apply       # 2. Terraform: sieć, storage, firewall, 8 maszyn wirtualnych
+make ansible-apply   # 3. Ansible: konfiguracja wszystkiego wewnątrz maszyn
 ```
 
 Albo `make up`, które robi kroki 2 i 3. `make help` wypisuje wszystkie cele.
@@ -151,7 +152,7 @@ Albo `make up`, które robi kroki 2 i 3. `make help` wypisuje wszystkie cele.
 Każdy krok jest idempotentny - ponowne uruchomienie na gotowej infrastrukturze
 nie wprowadza zmian.
 
-### Dlaczego `make host` jest osobno
+### Dlaczego `make bootstrap-host` jest osobno
 
 Problem kury i jajka: Terraform potrzebuje użytkownika i tokenu API Proxmoxa,
 a te mogą powstać dopiero na działającym hoście. `ansible/bootstrap-host.yml`
