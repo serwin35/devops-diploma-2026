@@ -29,8 +29,8 @@ data "aws_iam_policy_document" "tf_state" {
   # zarządzać. Prawa są zawężone do dokładnie tego bucketa i tego usera,
   # więc klucz stanu nadal nie może dotknąć stanu, kopii ani innych tożsamości.
   statement {
-    sid       = "ManageAppStorageBucket"
-    actions   = ["s3:*"]
+    sid     = "ManageAppStorageBucket"
+    actions = ["s3:*"]
     resources = [
       "arn:aws:s3:::${var.app_storage_bucket}",
       "arn:aws:s3:::${var.app_storage_bucket}/*",

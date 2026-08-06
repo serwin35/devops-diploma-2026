@@ -16,7 +16,8 @@ app:
   env: production
   url: https://{{ public_zone }}
   # Pliki na S3: storage/app w podzie to emptyDir - ginie z podem, a repliki
-  # nie widzą nawzajem swoich plików. Bucket z terraform/bootstrap.
+  # nie widzą nawzajem swoich plików. Bucket tworzy moduł usługi
+  # terraform/modules/services/proxmox/wolffire/prod (storage.tf).
   filesystemDisk: s3
 
 s3:

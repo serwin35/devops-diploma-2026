@@ -101,7 +101,7 @@ redis:
   password: ""
 
 # Pliki aplikacji w S3 - używane tylko, gdy app.filesystemDisk == "s3".
-# Bucket i tożsamość IAM tworzy terraform/bootstrap (storage.tf) w repo
+# Bucket i tożsamość IAM tworzy moduł usługi wolffire/prod w repo
 # infrastruktury; klucze podaje pipeline, nigdy to repo.
 s3:
   bucket: ""
