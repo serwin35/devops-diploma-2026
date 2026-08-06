@@ -568,12 +568,16 @@ Klucz age: `~/.config/sops/age/keys.txt` (na macOS dowiązany też do
 Snapshot wszystkich maszyn - **zrób to przed obroną**:
 
 ```bash
-ssh wf-proxmox-1 'for id in 110 120 121 122 130 131 132 140; do \
+# Najkrócej - identyfikatory maszyn pobierane na żywo z qm list:
+make snapshot NAME=przed-obrona     # migawka wszystkich maszyn
+make snapshot-list                  # co mamy
+make snapshot-rollback VM=130 NAME=przed-obrona   # powrót JEDNEJ maszyny (+start)
+
+# To samo surowymi komendami:
+ssh wf-proxmox-1 'for id in $(sudo qm list | awk "NR>1 {print \$1}"); do \
   sudo qm snapshot $id przed-obrona --description "stan sprzed demonstracji"; done'
 
 ssh wf-proxmox-1 'sudo qm listsnapshot 130'
-
-# Powrot
 ssh wf-proxmox-1 'sudo qm rollback 130 przed-obrona'
 ```
 
@@ -760,7 +764,7 @@ pytanie. Reszta pokazu to schodzenie w głąb od tego obrazka.
 
 ### Przygotowanie dzień wcześniej
 
-- [ ] Snapshot wszystkich maszyn (§11) - powrót w kilkanaście sekund, gdyby demo padło
+- [ ] `make snapshot NAME=przed-obrona` (§11) - powrót w kilkanaście sekund, gdyby demo padło
 - [ ] `make tf-plan` -> `No changes` (dowód idempotentności bez czekania na `apply`)
 - [ ] Terminal zalogowany na `k3s-server-1` w osobnej karcie
 - [ ] Sesja Cloudflare Access odświeżona (ważna 6 h)

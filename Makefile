@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help secrets secrets-app bootstrap-aws bootstrap-host tf-plan tf-apply ansible-apply ansible-check status up fmt validate aws host infra plan configure check
+.PHONY: help secrets secrets-app bootstrap-aws bootstrap-host tf-plan tf-apply ansible-apply ansible-check status up fmt validate snapshot snapshot-list snapshot-rollback aws host infra plan configure check
 
 # SOPS na macOS szuka klucza w ~/Library/Application Support/sops/age/, a na Linuksie
 # w ~/.config/sops/age/. Wskazujemy ścieżkę XDG jawnie, żeby to samo repozytorium
@@ -87,6 +87,25 @@ validate: ## Walidacja składni
 .PHONY: test-infra
 test-infra: ## Testy dymne infrastruktury (tylko odczyt, nic nie zmienia)
 	@./scripts/smoke-test.sh
+
+# Migawki maszyn na hypervisorze. Lista identyfikatorów pobierana na żywo
+# z `qm list`, więc nowa maszyna jest obejmowana automatycznie. Migawka bez
+# --vmstate (dysk, bez RAM): szybka i wystarczająca do powrotu po nieudanym
+# eksperymencie; po rollbacku maszynę trzeba uruchomić, co robi cel niżej.
+SNAP_NAME = $(or $(NAME),snap-$(shell date +%Y%m%d-%H%M))
+
+snapshot: ## Migawka WSZYSTKICH maszyn (NAME=nazwa, domyślnie snap-RRRRMMDD-HHMM)
+	ssh -F ansible/ssh_config wf-proxmox-1 'for id in $$(sudo qm list | awk "NR>1 {print \$$1}"); do 		echo "== VM $$id"; sudo qm snapshot $$id $(SNAP_NAME) --description "make snapshot"; done'
+
+snapshot-list: ## Lista migawek każdej maszyny
+	@ssh -F ansible/ssh_config wf-proxmox-1 'for id in $$(sudo qm list | awk "NR>1 {print \$$1}"); do 		echo "== VM $$id ($$(sudo qm config $$id | awk -F": " "/^name:/ {print \$$2}"))"; sudo qm listsnapshot $$id; done'
+
+# Powrót jest OPERACJĄ NISZCZĄCĄ: stan maszyny po migawce przepada.
+# Celowo działa na jednej maszynie naraz - powrót całego środowiska to
+# decyzja, którą podejmuje się osiem razy świadomie, nie jednym enterem.
+snapshot-rollback: ## Powrót JEDNEJ maszyny do migawki (wymagane: VM=<id> NAME=<nazwa>)
+	@test -n "$(VM)" && test -n "$(NAME)" || { echo "Użycie: make snapshot-rollback VM=130 NAME=przed-obrona"; exit 1; }
+	ssh -F ansible/ssh_config wf-proxmox-1 'sudo qm rollback $(VM) $(NAME) && sudo qm start $(VM) || true'
 
 # Stare nazwy celów - zachowane jako aliasy, żeby nic nie zaskoczyło ręki
 # przyzwyczajonej do poprzednich komend. Nowe nazwy mówią wprost, które

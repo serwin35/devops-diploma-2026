@@ -94,6 +94,9 @@ Jedyne wejście do operacji na infrastrukturze - nikt nie powinien wołać
 | `make ansible-check` | `ansible-playbook playbook.yml --check --diff` - na sucho; też przyjmuje `LIMIT`/`TAGS` |
 | `make status` | Zdrowie całości: węzły k3s, pody, kontenery dev, kody HTTP - tylko odczyt |
 | `make test-infra` | `scripts/smoke-test.sh` - testy dymne, tylko odczyt |
+| `make snapshot` | Migawka wszystkich VM (`NAME=` nazwa, domyślnie znacznik czasu) |
+| `make snapshot-list` | Lista migawek każdej maszyny |
+| `make snapshot-rollback` | Powrót jednej maszyny: `VM=<id> NAME=<nazwa>` (niszczące!) |
 | `make fmt` / `make validate` | Formatowanie i walidacja składni |
 
 **PVE_TUNNEL** (linie 12-15): API Proxmoxa nie jest wystawione na internet -
