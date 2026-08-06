@@ -33,18 +33,14 @@ variable "backup_retention_days" {
   description = "Po ilu dniach kopie są usuwane"
 }
 
+# Sam bucket i tożsamość wolffire-app tworzy moduł usługi wolffire/prod
+# w głównym Terraformie - tu żyje tylko nazwa, bo polityka klucza stanu
+# musi wskazać ARN-y, którymi wolno mu zarządzać.
 variable "app_storage_bucket" {
   type        = string
   nullable    = false
   default     = "wolffire-app-storage"
-  description = "Bucket na pliki aplikacji (Laravel FILESYSTEM_DISK=s3)"
-}
-
-variable "app_storage_region" {
-  type        = string
-  nullable    = false
-  default     = "eu-north-1"
-  description = "Region plików aplikacji - jak kopie, blisko serwera OVH"
+  description = "Bucket plików aplikacji - zarządza nim moduł usługi wolffire/prod"
 }
 
 variable "alerts_email" {

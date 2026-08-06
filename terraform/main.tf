@@ -83,6 +83,9 @@ module "wolffire_prod" {
   image_file_id      = local.vm_defaults.image_file_id
   cloud_init_file_id = local.vm_defaults.cloud_init_file_id
   pool_id            = module.proxmox_bootstrap.pool_ids["prod"]
+
+  # Domena publiczna aplikacji - origin dopuszczony w CORS bucketa plików.
+  zone = var.zone
 }
 
 # ── Cloudflare: tunele per maszyna ───────────────────────────────────────────
@@ -159,6 +162,18 @@ module "cloudflare_prod" {
     # Domena apex - produkcja. Publiczna, kontrola dostępu należy do aplikacji.
     prod = { port = 80, protected = false, apex = true }
   }
+
+  # Rekordy domeny produkcyjnej niepochodzące z tunelu dopisuje się tutaj -
+  # przy usłudze, do której należą. Przykład (weryfikacja Google Search
+  # Console; name = null oznacza apex, czyli samą wolffire.dev):
+  #
+  #   extra_records = {
+  #     google_site_verification = {
+  #       type    = "TXT"
+  #       content = "google-site-verification=<token>"
+  #       comment = "Weryfikacja wlasnosci domeny w Google Search Console"
+  #     }
+  #   }
 }
 
 module "cloudflare_dev" {

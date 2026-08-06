@@ -23,6 +23,41 @@ data "aws_iam_policy_document" "tf_state" {
     ]
     resources = ["${aws_s3_bucket.state.arn}/*"]
   }
+
+  # Storage aplikacji (bucket + tożsamość wolffire-app) jest zasobem USŁUGI
+  # wolffire/prod i mieszka w głównym Terraformie - to on musi umieć nim
+  # zarządzać. Prawa są zawężone do dokładnie tego bucketa i tego usera,
+  # więc klucz stanu nadal nie może dotknąć stanu, kopii ani innych tożsamości.
+  statement {
+    sid       = "ManageAppStorageBucket"
+    actions   = ["s3:*"]
+    resources = [
+      "arn:aws:s3:::${var.app_storage_bucket}",
+      "arn:aws:s3:::${var.app_storage_bucket}/*",
+    ]
+  }
+
+  statement {
+    sid = "ManageAppStorageIdentity"
+    actions = [
+      "iam:CreateUser",
+      "iam:DeleteUser",
+      "iam:GetUser",
+      "iam:TagUser",
+      "iam:UntagUser",
+      "iam:ListGroupsForUser",
+      "iam:PutUserPolicy",
+      "iam:GetUserPolicy",
+      "iam:DeleteUserPolicy",
+      "iam:ListUserPolicies",
+      "iam:ListAttachedUserPolicies",
+      "iam:CreateAccessKey",
+      "iam:DeleteAccessKey",
+      "iam:ListAccessKeys",
+      "iam:UpdateAccessKey",
+    ]
+    resources = ["arn:aws:iam::*:user/wolffire-app"]
+  }
 }
 
 resource "aws_iam_user_policy" "tf_state" {

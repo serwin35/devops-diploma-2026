@@ -63,6 +63,30 @@ resource "cloudflare_dns_record" "this" {
   proxied = true
 }
 
+# Rekordy domeny usługi niepochodzące z tunelu (np. TXT weryfikacji Google).
+# Mieszkają tu, a nie w module strefy, bo należą do domeny TEJ usługi.
+resource "cloudflare_dns_record" "extra" {
+  for_each = var.extra_records
+
+  zone_id = data.cloudflare_zone.this.zone_id
+  name    = each.value.name == null ? var.zone : "${each.value.name}.${var.zone}"
+  type    = each.value.type
+
+  # TXT wymaga cudzysłowów - provider v5 przekazuje treść dosłownie, a API
+  # zwraca rekordy ocytowane; bez tego plan miałby wieczny diff (ta sama
+  # konwencja co w modules/services/cloudflare/dns).
+  content = (
+    each.value.type == "TXT" && !startswith(each.value.content, "\"")
+    ? "\"${each.value.content}\""
+    : each.value.content
+  )
+
+  ttl      = each.value.ttl
+  priority = each.value.priority
+  proxied  = false
+  comment  = each.value.comment
+}
+
 # Zero Trust Access przed panelami administracyjnymi.
 module "policy" {
   source   = "../zero_trust_policy"
