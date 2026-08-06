@@ -42,11 +42,18 @@ infra: ## Terraform: sieć SDN, storage, firewall, maszyny wirtualne
 	@$(PVE_TUNNEL)
 	$(SOPS_ENV) '$(TF) apply'
 
-configure: ## Ansible: konfiguracja wszystkiego, co działa wewnątrz maszyn
-	$(SOPS_ENV) 'cd ansible && ansible-playbook playbook.yml'
+# LIMIT i TAGS zawężają zakres obu celów poniżej, np.:
+#   make configure LIMIT=worker-1               # jedna maszyna, wszystkie role
+#   make configure LIMIT=monitoring-1 TAGS=monitoring
+#   make check LIMIT=k3s-server-1               # na sucho, jeden host
+# LIMIT przyjmuje nazwy z inventory (monitoring-1), nie aliasy SSH (wf-...).
+ANSIBLE_ARGS = $(if $(LIMIT),--limit $(LIMIT)) $(if $(TAGS),--tags $(TAGS))
 
-check: ## Ansible na sucho: co by się zmieniło, z diffem (nic nie zmienia)
-	$(SOPS_ENV) 'cd ansible && ansible-playbook playbook.yml --check --diff'
+configure: ## Ansible: konfiguracja maszyn (zawężanie: LIMIT=host TAGS=rola)
+	$(SOPS_ENV) 'cd ansible && ansible-playbook playbook.yml $(ANSIBLE_ARGS)'
+
+check: ## Ansible na sucho, z diffem (zawężanie: LIMIT=host TAGS=rola)
+	$(SOPS_ENV) 'cd ansible && ansible-playbook playbook.yml --check --diff $(ANSIBLE_ARGS)'
 
 # Jeden rzut oka na zdrowie całości: węzły i pody produkcji, kontenery dev,
 # odpowiedzi HTTP obu środowisk. Wyłącznie odczyt.

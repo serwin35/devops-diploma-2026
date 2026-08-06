@@ -85,13 +85,13 @@ Jedyne wejście do operacji na infrastrukturze - nikt nie powinien wołać
 |---|---|
 | `make host` | `ansible-playbook bootstrap-host.yml` - krok zerowy, jednorazowo |
 | `make infra` | `terraform apply` (przez SSH-tunel do API Proxmoxa, `PVE_TUNNEL`) |
-| `make configure` | `ansible-playbook playbook.yml` - cała konfiguracja maszyn |
+| `make configure` | `ansible-playbook playbook.yml` - konfiguracja maszyn; `LIMIT=host TAGS=rola` zawężają |
 | `make up` | `infra` + `configure` razem |
 | `make plan` | `terraform plan` - podgląd zmian |
 | `make secrets` | `sops secrets.sops.yaml` - sekrety dostawców (Proxmox, Cloudflare, AWS) |
 | `make secrets-app` | `sops ansible/group_vars/all/secrets.sops.yml` - sekrety wnętrza (hasła baz, Grafany...) |
 | `make aws` | Terraform bootstrap: buckety S3 + IAM (stan lokalny, raz) |
-| `make check` | `ansible-playbook playbook.yml --check --diff` - Ansible na sucho |
+| `make check` | `ansible-playbook playbook.yml --check --diff` - na sucho; też przyjmuje `LIMIT`/`TAGS` |
 | `make status` | Zdrowie całości: węzły k3s, pody, kontenery dev, kody HTTP - tylko odczyt |
 | `make test-infra` | `scripts/smoke-test.sh` - testy dymne, tylko odczyt |
 | `make fmt` / `make validate` | Formatowanie i walidacja składni |
